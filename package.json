@@ -1,0 +1,12 @@
+{
+  "name": "scribe-rs",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/cli": "^2.10.1"
+  }
+}

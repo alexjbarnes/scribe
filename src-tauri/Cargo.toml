@@ -1,0 +1,32 @@
+[package]
+name = "scribe-rs"
+version = "0.1.0"
+description = "Voice dictation app"
+authors = ["Alex"]
+edition = "2021"
+
+[lib]
+name = "scribe_rs_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+log = "0.4"
+env_logger = "0.11"
+thiserror = "2"
+anyhow = "1"
+dirs = "6"
+reqwest = { version = "0.12", features = ["stream"] }
+tokio = { version = "1", features = ["fs", "io-util"] }
+futures-util = "0.3"
+cpal = "0.15"
+arboard = "3"
+sherpa-onnx = "1.12"

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scribe</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            accent: '#9ba8ff',
+            'accent-hover': '#b0baff',
+            surface: '#1a1a1a',
+            card: '#222222',
+            'card-border': '#2a2a2a',
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="/styles.css" />
+  <script type="module" src="/main.js" defer></script>
+</head>
+<body class="bg-[#0e0e0e] text-gray-200 font-sans antialiased select-none overflow-hidden h-screen flex flex-col">
+
+  <!-- Tab navigation -->
+  <nav class="flex border-b border-gray-800 px-4 pt-1 shrink-0" data-tauri-drag-region>
+    <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-accent text-accent" data-tab="models">Models</button>
+    <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors" data-tab="audio">Audio</button>
+    <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors" data-tab="general">General</button>
+  </nav>
+
+  <!-- Models tab -->
+  <div id="models" class="tab-panel flex-1 overflow-y-auto p-5 space-y-6">
+    <!-- Whisper section -->
+    <section>
+      <h2 class="text-base font-semibold text-gray-100 mb-0.5">Whisper</h2>
+      <p class="text-xs text-gray-500 mb-3">OpenAI Whisper via whisper.cpp</p>
+      <div id="whisper-models" class="bg-surface rounded-lg border border-card-border divide-y divide-card-border"></div>
+    </section>
+
+    <!-- Parakeet section -->
+    <section>
+      <h2 class="text-base font-semibold text-gray-100 mb-0.5">Parakeet</h2>
+      <p class="text-xs text-gray-500 mb-3">NVIDIA NeMo Parakeet TDT via sherpa-onnx</p>
+      <div id="parakeet-models" class="bg-surface rounded-lg border border-card-border divide-y divide-card-border"></div>
+    </section>
+  </div>
+
+  <!-- Audio tab -->
+  <div id="audio" class="tab-panel hidden flex-1 overflow-y-auto p-5">
+    <div class="bg-surface rounded-lg border border-card-border p-5">
+      <h2 class="text-base font-semibold text-gray-100 mb-0.5">Audio Input</h2>
+      <p class="text-xs text-gray-500 mb-5">Select the microphone used for dictation</p>
+      <div class="space-y-1.5">
+        <label class="text-sm text-gray-400">Input Device</label>
+        <select id="audio-device" class="w-full bg-card border border-card-border rounded-md px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-accent transition-colors cursor-pointer">
+          <option>System Default</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- General tab -->
+  <div id="general" class="tab-panel hidden flex-1 overflow-y-auto p-5 space-y-5">
+    <!-- Dictation section -->
+    <section>
+      <h2 class="text-base font-semibold text-gray-100 mb-3">Dictation</h2>
+      <div class="bg-surface rounded-lg border border-card-border p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="text-sm text-gray-200">Hotkey</label>
+            <p class="text-xs text-gray-500 mt-0.5">Press and hold to dictate</p>
+          </div>
+          <span class="font-mono text-sm text-gray-400 bg-card border border-card-border px-3 py-1.5 rounded-md">&#8984; &#8679; Space</span>
+        </div>
+        <div class="border-t border-card-border"></div>
+        <div class="flex items-center justify-between gap-8">
+          <div>
+            <label class="text-sm text-gray-200">Language</label>
+            <p class="text-xs text-gray-500 mt-0.5">Transcription language code</p>
+          </div>
+          <input id="cfg-language" type="text" value="en" class="w-24 bg-card border border-card-border rounded-md px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-accent transition-colors text-right" />
+        </div>
+        <div class="border-t border-card-border"></div>
+        <div class="flex items-center justify-between gap-8">
+          <div>
+            <label class="text-sm text-gray-200">Threads</label>
+            <p class="text-xs text-gray-500 mt-0.5">CPU threads for transcription</p>
+          </div>
+          <input id="cfg-threads" type="number" value="4" min="1" max="32" class="w-24 bg-card border border-card-border rounded-md px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-accent transition-colors text-right" />
+        </div>
+      </div>
+    </section>
+
+    <!-- External Services section -->
+    <section>
+      <h2 class="text-base font-semibold text-gray-100 mb-3">External Services</h2>
+      <div class="bg-surface rounded-lg border border-card-border p-5 space-y-4">
+        <div class="flex items-center justify-between gap-8">
+          <div>
+            <label class="text-sm text-gray-200">Ollama URL</label>
+            <p class="text-xs text-gray-500 mt-0.5">Local LLM server for summarisation</p>
+          </div>
+          <input id="cfg-ollama-url" type="text" value="http://localhost:11434" class="w-64 bg-card border border-card-border rounded-md px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-accent transition-colors text-right" />
+        </div>
+        <div class="border-t border-card-border"></div>
+        <div class="flex items-center justify-between gap-8">
+          <div>
+            <label class="text-sm text-gray-200">Ollama Model</label>
+            <p class="text-xs text-gray-500 mt-0.5">Model for meeting summaries</p>
+          </div>
+          <input id="cfg-ollama-model" type="text" value="gemma3:4b" class="w-48 bg-card border border-card-border rounded-md px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-accent transition-colors text-right" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Storage section -->
+    <section>
+      <h2 class="text-base font-semibold text-gray-100 mb-3">Storage</h2>
+      <div class="bg-surface rounded-lg border border-card-border p-5">
+        <div class="flex items-center justify-between gap-8">
+          <div>
+            <label class="text-sm text-gray-200">Output Directory</label>
+            <p class="text-xs text-gray-500 mt-0.5">Where meeting summaries are saved</p>
+          </div>
+          <input id="cfg-output-dir" type="text" class="w-64 bg-card border border-card-border rounded-md px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-accent transition-colors text-right" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Save button -->
+    <div class="flex justify-end pb-2">
+      <button id="save-config" class="bg-accent hover:bg-accent-hover text-gray-900 font-medium text-sm px-5 py-2 rounded-md transition-colors">
+        Save Changes
+      </button>
+    </div>
+  </div>
+
+</body>
+</html>
