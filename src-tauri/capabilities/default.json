@@ -1,11 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main app capabilities",
+  "description": "Shared capabilities for all platforms",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default",
-    "global-shortcut:default"
+    "opener:default"
   ]
 }

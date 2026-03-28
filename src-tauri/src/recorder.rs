@@ -1,0 +1,448 @@
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
+
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+use crate::vad::Vad;
+
+const TARGET_SAMPLE_RATE: i32 = 16_000;
+const MAX_STREAM_RETRIES: u32 = 3;
+const RETRY_DELAY_MS: u64 = 500;
+
+/// Linear interpolation resampler (replaces sherpa_onnx::LinearResampler to
+/// avoid pulling in session.cc.o which contains an unresolvable NNAPI symbol
+/// on Android arm64).
+struct LinearResampler {
+    input_rate: f64,
+    output_rate: f64,
+    /// Fractional position in the input stream (carries over between calls).
+    pos: f64,
+    /// Last sample from previous chunk for interpolation across boundaries.
+    last_sample: f32,
+}
+
+impl LinearResampler {
+    fn create(input_rate: i32, output_rate: i32) -> Option<Self> {
+        if input_rate <= 0 || output_rate <= 0 {
+            return None;
+        }
+        Some(Self {
+            input_rate: input_rate as f64,
+            output_rate: output_rate as f64,
+            pos: 0.0,
+            last_sample: 0.0,
+        })
+    }
+
+    fn resample(&mut self, input: &[f32], flush: bool) -> Vec<f32> {
+        if input.is_empty() && !flush {
+            return Vec::new();
+        }
+
+        let ratio = self.input_rate / self.output_rate;
+        let input_len = input.len() as f64;
+        let mut output = Vec::new();
+
+        while self.pos < input_len {
+            let idx = self.pos.floor() as usize;
+            let frac = (self.pos - idx as f64) as f32;
+
+            let a = if idx == 0 && self.pos < 1.0 {
+                self.last_sample
+            } else if idx < input.len() {
+                input[idx]
+            } else {
+                break;
+            };
+
+            let b = if idx + 1 < input.len() {
+                input[idx + 1]
+            } else if flush {
+                a
+            } else {
+                break;
+            };
+
+            output.push(a + frac * (b - a));
+            self.pos += ratio;
+        }
+
+        self.pos -= input_len;
+        if !input.is_empty() {
+            self.last_sample = input[input.len() - 1];
+        }
+
+        output
+    }
+}
+
+enum Cmd {
+    Start,
+    Stop,
+}
+
+enum Event {
+    Started,
+    Stopped(Vec<f32>),
+    Error(String),
+}
+
+/// Why the record loop exited.
+enum LoopExit {
+    UserStopped,
+    Disconnected,
+}
+
+struct StreamHandle {
+    stream: cpal::Stream,
+    audio_rx: mpsc::Receiver<Vec<f32>>,
+    resampler: Option<LinearResampler>,
+    disconnected: Arc<AtomicBool>,
+}
+
+/// Audio recorder with a dedicated worker thread.
+pub struct AudioRecorder {
+    cmd_tx: mpsc::Sender<Cmd>,
+    event_rx: mpsc::Receiver<Event>,
+}
+
+impl AudioRecorder {
+    /// Spawn the recorder worker. The VAD model path must point to a Silero
+    /// ONNX file. If `vad_model` is None, VAD is disabled and all audio is kept.
+    pub fn new(vad_model: Option<&Path>) -> Result<Self, String> {
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+
+        let vad_path: Option<PathBuf> = vad_model.map(|p| p.to_path_buf());
+
+        std::thread::Builder::new()
+            .name("audio-recorder".into())
+            .spawn(move || {
+                let vad = match vad_path {
+                    Some(ref path) => match Vad::new(path, 300) {
+                        Ok(v) => {
+                            let _ = ready_tx.send(Ok(()));
+                            Some(v)
+                        }
+                        Err(e) => {
+                            let _ = ready_tx.send(Err(e));
+                            return;
+                        }
+                    },
+                    None => {
+                        let _ = ready_tx.send(Ok(()));
+                        None
+                    }
+                };
+                worker(cmd_rx, event_tx, vad);
+            })
+            .map_err(|e| format!("spawn recorder thread: {e}"))?;
+
+        ready_rx
+            .recv()
+            .map_err(|e| format!("recorder thread died: {e}"))??;
+
+        Ok(Self { cmd_tx, event_rx })
+    }
+
+    pub fn start(&self) -> Result<(), String> {
+        self.cmd_tx
+            .send(Cmd::Start)
+            .map_err(|_| "recorder thread dead".to_string())?;
+
+        match self.event_rx.recv() {
+            Ok(Event::Started) => Ok(()),
+            Ok(Event::Error(e)) => Err(e),
+            Ok(Event::Stopped(_)) => Err("unexpected stop event".into()),
+            Err(_) => Err("recorder thread dead".into()),
+        }
+    }
+
+    pub fn stop(&self) -> Result<Vec<f32>, String> {
+        self.cmd_tx
+            .send(Cmd::Stop)
+            .map_err(|_| "recorder thread dead".to_string())?;
+
+        match self.event_rx.recv() {
+            Ok(Event::Stopped(samples)) => Ok(samples),
+            Ok(Event::Error(e)) => Err(e),
+            Ok(Event::Started) => Err("unexpected start event".into()),
+            Err(_) => Err("recorder thread dead".into()),
+        }
+    }
+}
+
+fn worker(cmd_rx: mpsc::Receiver<Cmd>, event_tx: mpsc::Sender<Event>, mut vad: Option<Vad>) {
+    while let Ok(cmd) = cmd_rx.recv() {
+        match cmd {
+            Cmd::Start => {
+                if let Some(ref mut v) = vad {
+                    v.reset();
+                }
+
+                let mut sent_started = false;
+                let mut all_samples: Vec<f32> = Vec::new();
+                let mut last_err = String::new();
+                let mut user_stopped = false;
+
+                for attempt in 0..MAX_STREAM_RETRIES {
+                    if attempt > 0 {
+                        log::info!(
+                            "Retrying stream (attempt {}/{})...",
+                            attempt + 1,
+                            MAX_STREAM_RETRIES,
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS));
+
+                        // Check if user sent Stop while we were sleeping
+                        if let Ok(Cmd::Stop) = cmd_rx.try_recv() {
+                            log::info!("User stopped during retry wait");
+                            user_stopped = true;
+                            break;
+                        }
+                    }
+
+                    match open_stream() {
+                        Ok(mut handle) => {
+                            if !sent_started {
+                                let _ = event_tx.send(Event::Started);
+                                sent_started = true;
+                            }
+
+                            let (samples, exit_reason) = record_loop(
+                                &cmd_rx,
+                                &handle.audio_rx,
+                                &mut handle.resampler,
+                                &mut vad,
+                                &handle.disconnected,
+                            );
+                            drop(handle.stream);
+
+                            match exit_reason {
+                                LoopExit::UserStopped => {
+                                    all_samples = samples;
+                                    user_stopped = true;
+                                    last_err.clear();
+                                    break;
+                                }
+                                LoopExit::Disconnected => {
+                                    if !samples.is_empty() {
+                                        // Got some audio before disconnect, keep it
+                                        log::info!(
+                                            "Stream disconnected after capturing {:.1}s",
+                                            samples.len() as f32 / TARGET_SAMPLE_RATE as f32
+                                        );
+                                        all_samples = samples;
+                                        last_err.clear();
+                                        break;
+                                    }
+                                    log::warn!(
+                                        "Stream disconnected with no audio (attempt {})",
+                                        attempt + 1
+                                    );
+                                    last_err = "audio stream keeps disconnecting".into();
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to open audio stream: {e}");
+                            last_err = e;
+                        }
+                    }
+                }
+
+                if !sent_started {
+                    let _ = event_tx.send(Event::Error(last_err));
+                } else if user_stopped {
+                    let _ = event_tx.send(Event::Stopped(all_samples));
+                } else {
+                    // All retries failed
+                    log::error!("All {MAX_STREAM_RETRIES} stream attempts failed");
+                    let _ = event_tx.send(Event::Stopped(all_samples));
+                }
+            }
+            Cmd::Stop => {
+                let _ = event_tx.send(Event::Stopped(Vec::new()));
+            }
+        }
+    }
+}
+
+/// Open the mic and return the stream handle.
+fn open_stream() -> Result<StreamHandle, String> {
+    let host = cpal::default_host();
+    let device = host
+        .default_input_device()
+        .ok_or("no input device available")?;
+
+    let supported = device
+        .default_input_config()
+        .map_err(|e| format!("no input config: {e}"))?;
+
+    let device_rate = supported.sample_rate().0 as i32;
+    let channels = supported.channels() as usize;
+
+    log::info!(
+        "Opening stream: {device_rate}Hz, {channels}ch, {:?}",
+        supported.sample_format()
+    );
+
+    let stream_config: cpal::StreamConfig = supported.into();
+
+    let resampler = if device_rate != TARGET_SAMPLE_RATE {
+        Some(
+            LinearResampler::create(device_rate, TARGET_SAMPLE_RATE)
+                .ok_or("failed to create resampler")?,
+        )
+    } else {
+        None
+    };
+
+    let (audio_tx, audio_rx) = mpsc::channel::<Vec<f32>>();
+    let disconnected = Arc::new(AtomicBool::new(false));
+    let disc_flag = disconnected.clone();
+
+    let stream = device
+        .build_input_stream(
+            &stream_config,
+            move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let mono: Vec<f32> = if channels > 1 {
+                    data.chunks(channels)
+                        .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+                        .collect()
+                } else {
+                    data.to_vec()
+                };
+                let _ = audio_tx.send(mono);
+            },
+            move |err| {
+                log::error!("input stream error: {err}");
+                disc_flag.store(true, Ordering::SeqCst);
+            },
+            None,
+        )
+        .map_err(|e| format!("build input stream: {e}"))?;
+
+    stream
+        .play()
+        .map_err(|e| format!("start stream: {e}"))?;
+
+    log::info!("Recording at {device_rate}Hz, {channels}ch -> {TARGET_SAMPLE_RATE}Hz");
+
+    Ok(StreamHandle {
+        stream,
+        audio_rx,
+        resampler,
+        disconnected,
+    })
+}
+
+/// Record audio until a Stop command arrives or the stream disconnects.
+fn record_loop(
+    cmd_rx: &mpsc::Receiver<Cmd>,
+    audio_rx: &mpsc::Receiver<Vec<f32>>,
+    resampler: &mut Option<LinearResampler>,
+    vad: &mut Option<Vad>,
+    disconnected: &AtomicBool,
+) -> (Vec<f32>, LoopExit) {
+    let mut all_samples: Vec<f32> = Vec::new();
+    let mut speech_samples: Vec<f32> = Vec::new();
+    let mut exit_reason = LoopExit::Disconnected;
+
+    loop {
+        // Check for stop command
+        match cmd_rx.try_recv() {
+            Ok(Cmd::Stop) => {
+                exit_reason = LoopExit::UserStopped;
+                break;
+            }
+            Ok(Cmd::Start) => {}
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                exit_reason = LoopExit::UserStopped;
+                break;
+            }
+        }
+
+        // Check for stream disconnect
+        if disconnected.load(Ordering::SeqCst) {
+            // Drain any remaining buffered audio
+            while let Ok(mono) = audio_rx.try_recv() {
+                let resampled = match resampler {
+                    Some(ref mut r) => r.resample(&mono, false),
+                    None => mono,
+                };
+                all_samples.extend_from_slice(&resampled);
+            }
+            log::warn!("Stream disconnected, exiting record loop");
+            exit_reason = LoopExit::Disconnected;
+            break;
+        }
+
+        match audio_rx.recv_timeout(std::time::Duration::from_millis(50)) {
+            Ok(mono) => {
+                let resampled = match resampler {
+                    Some(ref mut r) => r.resample(&mono, false),
+                    None => mono,
+                };
+
+                match vad {
+                    Some(ref mut v) => {
+                        if let Some(segment) = v.accept(&resampled) {
+                            speech_samples.extend_from_slice(&segment);
+                        }
+                        all_samples.extend_from_slice(&resampled);
+                    }
+                    None => {
+                        all_samples.extend_from_slice(&resampled);
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    // Flush resampler tail
+    if let Some(ref mut r) = resampler {
+        let tail = r.resample(&[], true);
+        if !tail.is_empty() {
+            match vad {
+                Some(ref mut v) => {
+                    if let Some(segment) = v.accept(&tail) {
+                        speech_samples.extend_from_slice(&segment);
+                    }
+                }
+                None => {
+                    all_samples.extend_from_slice(&tail);
+                }
+            }
+        }
+    }
+
+    // Flush VAD
+    if let Some(ref mut v) = vad {
+        if let Some(segment) = v.flush() {
+            speech_samples.extend_from_slice(&segment);
+        }
+    }
+
+    let samples = if vad.is_some() && !speech_samples.is_empty() {
+        log::info!(
+            "VAD kept {:.1}s of speech from {:.1}s total",
+            speech_samples.len() as f32 / TARGET_SAMPLE_RATE as f32,
+            all_samples.len() as f32 / TARGET_SAMPLE_RATE as f32,
+        );
+        speech_samples
+    } else {
+        log::info!(
+            "Recorded {:.1}s (no VAD or no speech detected)",
+            all_samples.len() as f32 / TARGET_SAMPLE_RATE as f32,
+        );
+        all_samples
+    };
+
+    (samples, exit_reason)
+}

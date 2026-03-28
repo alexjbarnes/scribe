@@ -32,8 +32,15 @@ impl Default for AppConfig {
 
 impl AppConfig {
     fn config_path() -> Option<PathBuf> {
-        let home = dirs::home_dir()?;
-        Some(home.join("Library/Application Support/scribe/config.toml"))
+        #[cfg(target_os = "android")]
+        {
+            std::env::var_os("SCRIBE_DATA_DIR")
+                .map(|d| PathBuf::from(d).join("config.toml"))
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            dirs::config_dir().map(|d| d.join("scribe").join("config.toml"))
+        }
     }
 
     pub fn load() -> Self {
@@ -58,5 +65,73 @@ impl AppConfig {
         std::fs::write(&path, contents).map_err(|e| format!("write: {e}"))?;
         log::info!("Config saved to {}", path.display());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_sane() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.language, "en");
+        assert_eq!(cfg.threads, 4);
+        assert_eq!(cfg.active_engine, "whisper");
+        assert!(cfg.active_model_id.is_empty());
+        assert!(cfg.device_index < 0); // -1 means default device
+    }
+
+    #[test]
+    fn roundtrip_toml() {
+        let cfg = AppConfig {
+            language: "fr".into(),
+            threads: 8,
+            ollama_url: "http://localhost:9999".into(),
+            ollama_model: "test-model".into(),
+            output_dir: "/tmp/test".into(),
+            device_index: 2,
+            active_engine: "parakeet".into(),
+            active_model_id: "parakeet-v3-int8".into(),
+        };
+
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        let deserialized: AppConfig = toml::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized.language, "fr");
+        assert_eq!(deserialized.threads, 8);
+        assert_eq!(deserialized.ollama_url, "http://localhost:9999");
+        assert_eq!(deserialized.device_index, 2);
+        assert_eq!(deserialized.active_engine, "parakeet");
+        assert_eq!(deserialized.active_model_id, "parakeet-v3-int8");
+    }
+
+    #[test]
+    fn deserialize_partial_uses_defaults() {
+        // Missing fields should fail with strict deserialization
+        let partial = r#"
+language = "de"
+threads = 2
+"#;
+        let result: Result<AppConfig, _> = toml::from_str(partial);
+        // toml strict deserialize requires all fields
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_with_all_fields() {
+        let full = r#"
+language = "en"
+threads = 4
+ollama_url = "http://localhost:11434"
+ollama_model = "gemma3:4b"
+output_dir = "/tmp"
+device_index = -1
+active_engine = "whisper"
+active_model_id = ""
+"#;
+        let cfg: AppConfig = toml::from_str(full).unwrap();
+        assert_eq!(cfg.language, "en");
+        assert_eq!(cfg.threads, 4);
     }
 }

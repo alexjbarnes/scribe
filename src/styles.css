@@ -1,3 +1,11 @@
+/* Safe area insets for Android/iOS status bar */
+body {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -32,4 +40,23 @@ select {
   border-radius: 3px;
   background: #9ba8ff;
   transition: width 0.3s ease;
+}
+
+/* Record button pulse animation */
+.record-btn.recording {
+  background: #ef4444;
+  animation: pulse-ring 1.5s ease-out infinite;
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+  70% { box-shadow: 0 0 0 12px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+/* Mobile: disable drag region */
+@media (max-width: 640px) {
+  [data-tauri-drag-region] {
+    -webkit-app-region: none;
+  }
 }

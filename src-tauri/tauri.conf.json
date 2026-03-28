@@ -14,9 +14,9 @@
         "title": "Scribe",
         "width": 620,
         "height": 560,
-        "visible": false,
+        "visible": true,
         "center": true,
-        "resizable": false
+        "resizable": true
       }
     ],
     "security": {

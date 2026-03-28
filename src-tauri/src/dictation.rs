@@ -1,191 +1,242 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::mpsc;
+use std::sync::Mutex;
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use tauri::Emitter;
 
-use crate::sound;
+use tauri::Manager;
+
+use crate::coordinator::{Coordinator, DictationCmd, ShortcutEvent};
+use crate::models::ModelManager;
+use crate::recorder::AudioRecorder;
 use crate::transcribe::Transcriber;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum State {
-    Idle,
-    Recording,
-    Processing,
-}
-
 pub struct DictationManager {
-    state: Mutex<State>,
-    audio_buffer: Arc<Mutex<Vec<f32>>>,
-    recording_active: Arc<AtomicBool>,
-    sample_rate: Arc<Mutex<u32>>,
-    channels: Arc<Mutex<u16>>,
+    recorder: Mutex<Option<AudioRecorder>>,
     transcriber: Mutex<Option<Transcriber>>,
+    coordinator: Coordinator,
+    app_handle: Mutex<Option<tauri::AppHandle>>,
 }
 
 impl DictationManager {
-    pub fn new() -> Self {
-        Self {
-            state: Mutex::new(State::Idle),
-            audio_buffer: Arc::new(Mutex::new(Vec::new())),
-            recording_active: Arc::new(AtomicBool::new(false)),
-            sample_rate: Arc::new(Mutex::new(48000)),
-            channels: Arc::new(Mutex::new(1)),
+    pub fn new() -> (Self, mpsc::Receiver<DictationCmd>) {
+        let (coordinator, cmd_rx) = Coordinator::new(30);
+        let mgr = Self {
+            recorder: Mutex::new(None),
             transcriber: Mutex::new(None),
-        }
+            coordinator,
+            app_handle: Mutex::new(None),
+        };
+        (mgr, cmd_rx)
+    }
+
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        *self.app_handle.lock().unwrap() = Some(handle);
+    }
+
+    pub fn set_recorder(&self, r: AudioRecorder) {
+        *self.recorder.lock().unwrap() = Some(r);
     }
 
     pub fn set_transcriber(&self, t: Transcriber) {
         *self.transcriber.lock().unwrap() = Some(t);
     }
 
-    pub fn start(&self) {
-        let current = *self.state.lock().unwrap();
-        if current != State::Idle {
+    /// Forward a shortcut event to the coordinator for debouncing.
+    pub fn on_shortcut(&self, event: ShortcutEvent) {
+        self.coordinator.send(event);
+    }
+
+    fn emit_state(&self, state: &str) {
+        if let Some(ref handle) = *self.app_handle.lock().unwrap() {
+            let _ = handle.emit("dictation-state", serde_json::json!({ "state": state }));
+        }
+    }
+
+    fn emit_error(&self, msg: &str) {
+        log::error!("{msg}");
+        if let Some(ref handle) = *self.app_handle.lock().unwrap() {
+            let _ = handle.emit("dictation-error", serde_json::json!({ "error": msg }));
+        }
+        self.emit_state("error");
+    }
+
+    /// Lazily create a recorder if none exists (mobile path).
+    pub fn ensure_recorder(&self) {
+        let mut recorder = self.recorder.lock().unwrap();
+        if recorder.is_some() {
             return;
         }
-        self.start_recording();
-    }
-
-    pub fn stop(&self) {
-        let current = *self.state.lock().unwrap();
-        if current != State::Recording {
-            return;
+        log::info!("Creating audio recorder on demand (no VAD)");
+        match AudioRecorder::new(None) {
+            Ok(rec) => {
+                *recorder = Some(rec);
+                log::info!("Audio recorder ready");
+            }
+            Err(e) => self.emit_error(&format!("Failed to create audio recorder: {e}")),
         }
-        self.stop_recording();
     }
 
-    fn start_recording(&self) {
-        sound::start_beep();
-
-        self.audio_buffer.lock().unwrap().clear();
-        self.recording_active.store(true, Ordering::SeqCst);
-
-        let buffer = self.audio_buffer.clone();
-        let active = self.recording_active.clone();
-        let rate_out = self.sample_rate.clone();
-        let channels_out = self.channels.clone();
-
-        std::thread::spawn(move || {
-            let host = cpal::default_host();
-            let Some(device) = host.default_input_device() else {
-                log::error!("No input device available");
-                active.store(false, Ordering::SeqCst);
-                return;
-            };
-
-            let Ok(supported) = device.default_input_config() else {
-                log::error!("No input config available");
-                active.store(false, Ordering::SeqCst);
-                return;
-            };
-
-            let rate = supported.sample_rate().0;
-            let ch = supported.channels();
-            *rate_out.lock().unwrap() = rate;
-            *channels_out.lock().unwrap() = ch;
-            let stream_config: cpal::StreamConfig = supported.into();
-
-            let stream = device.build_input_stream(
-                &stream_config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    buffer.lock().unwrap().extend_from_slice(data);
-                },
-                |err| log::error!("Input stream error: {err}"),
-                None,
-            );
-
-            let Ok(stream) = stream else {
-                log::error!("Failed to build input stream");
-                active.store(false, Ordering::SeqCst);
-                return;
-            };
-
-            if let Err(e) = stream.play() {
-                log::error!("Failed to start recording: {e}");
-                active.store(false, Ordering::SeqCst);
-                return;
+    /// Lazily load the transcription model if none exists (mobile path).
+    /// Returns true if a transcriber is available.
+    pub fn ensure_transcriber(&self, app_handle: &tauri::AppHandle) -> bool {
+        let mut transcriber = self.transcriber.lock().unwrap();
+        if transcriber.is_some() {
+            return true;
+        }
+        let mgr = app_handle.state::<ModelManager>();
+        if let Some((id, (enc, dec, joi, tok))) = mgr.first_downloaded_parakeet() {
+            log::info!("Loading transcription model on demand: {id}");
+            match Transcriber::new(&enc, &dec, &joi, &tok) {
+                Ok(t) => {
+                    *transcriber = Some(t);
+                    log::info!("Transcription model ready: {id}");
+                    true
+                }
+                Err(e) => {
+                    self.emit_error(&format!("Failed to load transcription model: {e}"));
+                    false
+                }
             }
-
-            log::info!("Recording at {}Hz, {} channel(s)", rate, ch);
-
-            while active.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        });
-
-        *self.state.lock().unwrap() = State::Recording;
-        log::info!("Recording started");
-    }
-
-    fn stop_recording(&self) {
-        *self.state.lock().unwrap() = State::Processing;
-
-        // Signal recording thread to stop
-        self.recording_active.store(false, Ordering::SeqCst);
-        std::thread::sleep(Duration::from_millis(100));
-
-        sound::stop_beep();
-
-        let raw_samples = self.audio_buffer.lock().unwrap().clone();
-        let rate = *self.sample_rate.lock().unwrap();
-        let ch = *self.channels.lock().unwrap() as usize;
-
-        // Convert to mono if multi-channel
-        let mono = if ch > 1 {
-            raw_samples
-                .chunks(ch)
-                .map(|frame| frame.iter().sum::<f32>() / ch as f32)
-                .collect::<Vec<f32>>()
         } else {
-            raw_samples
+            self.emit_error("No Parakeet model downloaded yet");
+            false
+        }
+    }
+
+    /// Handle a start command.
+    pub fn start(&self) {
+        let recorder = self.recorder.lock().unwrap();
+        let Some(ref rec) = *recorder else {
+            self.emit_error("No recorder available");
+            return;
         };
 
-        let duration = mono.len() as f32 / rate as f32;
-        log::info!("Recorded {:.1}s ({} mono samples @ {}Hz)", duration, mono.len(), rate);
+        match rec.start() {
+            Ok(()) => {
+                #[cfg(desktop)]
+                crate::sound::start_beep();
+                self.emit_state("recording");
+                log::info!("Recording started");
+            }
+            Err(e) => {
+                self.emit_error(&format!("Failed to start recording: {e}"));
+            }
+        }
+    }
 
-        // Transcribe
+    /// Handle a stop command: stop recording, transcribe, deliver result.
+    pub fn stop(&self) {
+        #[cfg(desktop)]
+        crate::sound::stop_beep();
+
+        let samples = {
+            let recorder = self.recorder.lock().unwrap();
+            match recorder.as_ref() {
+                Some(rec) => match rec.stop() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        self.emit_error(&format!("Failed to stop recording: {e}"));
+                        return;
+                    }
+                },
+                None => {
+                    self.emit_state("idle");
+                    return;
+                }
+            }
+        };
+
+        let duration = samples.len() as f32 / 16_000.0;
+        log::info!("Captured {:.1}s of audio", duration);
+
+        self.emit_state("transcribing");
+
         let text = {
             let guard = self.transcriber.lock().unwrap();
             if let Some(ref transcriber) = *guard {
-                match transcriber.transcribe(mono, rate as i32) {
+                match transcriber.transcribe(samples, 16_000) {
                     Ok(t) if !t.is_empty() => t,
                     Ok(_) => {
-                        log::warn!("Transcription returned empty text");
-                        "[No speech detected]".to_string()
+                        self.emit_error("No speech detected");
+                        return;
                     }
                     Err(e) => {
-                        log::error!("Transcription failed: {e}");
-                        format!("[Transcription error: {e}]")
+                        self.emit_error(&format!("Transcription failed: {e}"));
+                        return;
                     }
                 }
             } else {
-                log::warn!("No transcriber loaded");
-                format!("[Recorded {:.1}s — no model loaded]", duration)
+                self.emit_error("No transcriber loaded");
+                return;
             }
         };
 
-        if let Err(e) = paste_text(&text) {
+        // Emit result to frontend
+        if let Some(ref handle) = *self.app_handle.lock().unwrap() {
+            let _ = handle.emit(
+                "transcription-result",
+                serde_json::json!({ "text": &text }),
+            );
+        }
+
+        // Desktop: paste into focused app
+        #[cfg(desktop)]
+        if let Err(e) = crate::paste::paste(&text) {
             log::error!("Paste failed: {e}");
         }
 
-        *self.state.lock().unwrap() = State::Idle;
+        self.emit_state("idle");
+    }
+
+    /// Handle a cancel command: stop recording, discard audio.
+    pub fn cancel(&self) {
+        #[cfg(desktop)]
+        crate::sound::stop_beep();
+        let recorder = self.recorder.lock().unwrap();
+        if let Some(ref rec) = *recorder {
+            let _ = rec.stop();
+        }
+        self.emit_state("idle");
+        log::info!("Recording cancelled");
     }
 }
 
-fn paste_text(text: &str) -> Result<(), String> {
-    let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("clipboard: {e}"))?;
-    clipboard.set_text(text).map_err(|e| format!("set text: {e}"))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    std::thread::sleep(Duration::from_millis(50));
+    #[test]
+    fn new_returns_cmd_receiver() {
+        let (_mgr, cmd_rx) = DictationManager::new();
+        let result = cmd_rx.try_recv();
+        assert!(result.is_err());
+    }
 
-    // Simulate Cmd+V via osascript (works from any thread, unlike enigo)
-    std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(r#"tell application "System Events" to keystroke "v" using command down"#)
-        .output()
-        .map_err(|e| format!("osascript: {e}"))?;
+    #[test]
+    fn start_without_recorder_does_not_panic() {
+        let (mgr, _cmd_rx) = DictationManager::new();
+        mgr.start();
+    }
 
-    log::info!("Pasted: {text}");
-    Ok(())
+    #[test]
+    fn stop_without_recorder_does_not_panic() {
+        let (mgr, _cmd_rx) = DictationManager::new();
+        mgr.stop();
+    }
+
+    #[test]
+    fn cancel_without_recorder_does_not_panic() {
+        let (mgr, _cmd_rx) = DictationManager::new();
+        mgr.cancel();
+    }
+
+    #[test]
+    fn on_shortcut_sends_through_coordinator() {
+        let (mgr, cmd_rx) = DictationManager::new();
+
+        mgr.on_shortcut(ShortcutEvent::Pressed);
+
+        let cmd = cmd_rx.recv_timeout(std::time::Duration::from_millis(200));
+        assert!(matches!(cmd, Ok(DictationCmd::Start)));
+    }
 }

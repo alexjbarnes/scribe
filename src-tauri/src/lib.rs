@@ -1,16 +1,22 @@
 mod audio;
 mod config;
+mod coordinator;
+mod debug_log;
 mod dictation;
 mod models;
+#[cfg(desktop)]
+mod paste;
+mod recorder;
+#[cfg(desktop)]
 mod sound;
 mod transcribe;
+mod vad;
 
-use tauri::{
-    menu::{Menu, MenuItem, PredefinedMenuItem},
-    tray::TrayIconBuilder,
-    Manager,
-};
-use tauri_plugin_global_shortcut::ShortcutState;
+use std::sync::Arc;
+
+use tauri::Manager;
+
+use coordinator::{DictationCmd, ShortcutEvent};
 
 #[tauri::command]
 fn list_models(state: tauri::State<'_, models::ModelManager>) -> Vec<models::ModelInfo> {
@@ -43,7 +49,6 @@ fn switch_model(state: tauri::State<'_, models::ModelManager>, id: String) -> Re
 async fn download_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let mgr = app.state::<models::ModelManager>();
 
-    // Check not already downloaded
     if mgr.is_downloaded(&id) {
         return Ok(());
     }
@@ -51,100 +56,165 @@ async fn download_model(app: tauri::AppHandle, id: String) -> Result<(), String>
     mgr.download(&id, &app).await
 }
 
+#[tauri::command]
+async fn start_dictation(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Arc<dictation::DictationManager>>,
+) -> Result<(), String> {
+    let dm = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        dm.ensure_recorder();
+        if !dm.ensure_transcriber(&app) {
+            return;
+        }
+        dm.start();
+    })
+    .await
+    .map_err(|e| format!("join error: {e}"))
+}
+
+#[tauri::command]
+async fn stop_dictation(
+    state: tauri::State<'_, Arc<dictation::DictationManager>>,
+) -> Result<(), String> {
+    let dm = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || dm.stop())
+        .await
+        .map_err(|e| format!("join error: {e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    env_logger::init();
+    let _ = log::set_logger(&debug_log::LOGGER);
+    log::set_max_level(log::LevelFilter::Debug);
 
-    let model_manager =
-        models::ModelManager::new().expect("failed to create model manager");
-    let dictation_manager = dictation::DictationManager::new();
+    let mut builder = tauri::Builder::default();
 
-    tauri::Builder::default()
-        .manage(model_manager)
-        .manage(dictation_manager)
-        .plugin(
+    // Desktop: global shortcut for push-to-talk
+    #[cfg(desktop)]
+    {
+        use tauri_plugin_global_shortcut::ShortcutState;
+
+        builder = builder.plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_shortcut("alt+d")
                 .expect("failed to register shortcut")
                 .with_handler(|app, _shortcut, event| {
-                    let app = app.clone();
+                    let dm = app.state::<Arc<dictation::DictationManager>>();
                     match event.state {
                         ShortcutState::Pressed => {
-                            std::thread::spawn(move || {
-                                let dm = app.state::<dictation::DictationManager>();
-                                dm.start();
-                            });
+                            dm.on_shortcut(ShortcutEvent::Pressed);
                         }
                         ShortcutState::Released => {
-                            std::thread::spawn(move || {
-                                let dm = app.state::<dictation::DictationManager>();
-                                dm.stop();
-                            });
+                            dm.on_shortcut(ShortcutEvent::Released);
                         }
                     }
                 })
                 .build(),
-        )
+        );
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            // Build tray menu
-            let status = MenuItem::with_id(app, "status", "Idle", false, None::<&str>)?;
-            let sep1 = PredefinedMenuItem::separator(app)?;
-            let settings =
-                MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
-            let sep2 = PredefinedMenuItem::separator(app)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            // Android: set data dir env var for config/models path resolution.
+            // Must happen before ModelManager::new() which reads this.
+            #[cfg(target_os = "android")]
+            {
+                if let Ok(data_dir) = app.path().app_data_dir() {
+                    std::env::set_var("SCRIBE_DATA_DIR", &data_dir);
+                    let _ = std::fs::create_dir_all(&data_dir);
+                }
+            }
 
-            let menu = Menu::with_items(app, &[&status, &sep1, &settings, &sep2, &quit])?;
+            let model_manager = match models::ModelManager::new() {
+                Ok(m) => m,
+                Err(e) => {
+                    log::error!("Failed to create model manager: {e}");
+                    return Ok(());
+                }
+            };
 
-            // System tray
-            let icon = app.default_window_icon().cloned().expect("no app icon");
-            TrayIconBuilder::new()
-                .icon(icon)
-                .menu(&menu)
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "settings" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
+            let (dictation_manager, cmd_rx) = dictation::DictationManager::new();
+            let dictation_manager = Arc::new(dictation_manager);
+
+            // Spawn the command handler thread
+            let dm_for_cmds = dictation_manager.clone();
+            let _ = std::thread::Builder::new()
+                .name("dictation-cmds".into())
+                .spawn(move || {
+                    while let Ok(cmd) = cmd_rx.recv() {
+                        match cmd {
+                            DictationCmd::Start => dm_for_cmds.start(),
+                            DictationCmd::Stop => dm_for_cmds.stop(),
+                            DictationCmd::Cancel => dm_for_cmds.cancel(),
                         }
                     }
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .build(app)?;
+                });
 
-            // Hide on close instead of quitting
-            if let Some(window) = app.get_webview_window("main") {
-                let w = window.clone();
-                window.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = w.hide();
-                    }
+            // Set the app handle for event emission (dictation + debug logs)
+            dictation_manager.set_app_handle(app.handle().clone());
+            debug_log::set_app_handle(app.handle().clone());
+
+            app.manage(model_manager);
+            app.manage(dictation_manager.clone());
+
+            // Desktop: system tray and hide-on-close
+            #[cfg(desktop)]
+            {
+                use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+                use tauri::tray::TrayIconBuilder;
+
+                let status = MenuItem::with_id(app, "status", "Idle", false, None::<&str>)?;
+                let sep1 = PredefinedMenuItem::separator(app)?;
+                let settings =
+                    MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
+                let sep2 = PredefinedMenuItem::separator(app)?;
+                let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+
+                let menu = Menu::with_items(app, &[&status, &sep1, &settings, &sep2, &quit])?;
+
+                let icon = app.default_window_icon().cloned().expect("no app icon");
+                TrayIconBuilder::new()
+                    .icon(icon)
+                    .menu(&menu)
+                    .on_menu_event(|app, event| match event.id().as_ref() {
+                        "settings" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => app.exit(0),
+                        _ => {}
+                    })
+                    .build(app)?;
+
+                if let Some(window) = app.get_webview_window("main") {
+                    // Start hidden behind tray on desktop
+                    let _ = window.hide();
+
+                    let w = window.clone();
+                    window.on_window_event(move |event| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                            api.prevent_close();
+                            let _ = w.hide();
+                        }
+                    });
+                }
+            }
+
+            // Background init: download VAD model, set up recorder, load ASR model.
+            // On mobile, defer this until the user actually taps record to avoid
+            // crashing before audio permission is granted.
+            #[cfg(desktop)]
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    background_init(&app_handle);
                 });
             }
 
-            // Auto-load first available Parakeet model in background
-            let app_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let mgr = app_handle.state::<models::ModelManager>();
-                if let Some((id, (enc, dec, joi, tok))) = mgr.first_downloaded_parakeet() {
-                    log::info!("Loading transcription model: {id}");
-                    match transcribe::Transcriber::new(&enc, &dec, &joi, &tok) {
-                        Ok(t) => {
-                            let dm = app_handle.state::<dictation::DictationManager>();
-                            dm.set_transcriber(t);
-                            log::info!("Transcription model ready: {id}");
-                        }
-                        Err(e) => log::warn!("Failed to load transcription model: {e}"),
-                    }
-                } else {
-                    log::info!("No Parakeet model downloaded yet");
-                }
-            });
-
-            log::info!("Scribe started");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -154,7 +224,64 @@ pub fn run() {
             save_config,
             download_model,
             switch_model,
+            start_dictation,
+            stop_dictation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn background_init(app_handle: &tauri::AppHandle) {
+    let mgr = app_handle.state::<models::ModelManager>();
+    let dm = app_handle.state::<Arc<dictation::DictationManager>>();
+
+    // Set up recorder (with VAD if model available, without if not)
+    let vad_path = mgr.vad_model_path();
+    let vad_path = if vad_path.exists() {
+        Some(vad_path)
+    } else {
+        log::info!("VAD model not found, downloading...");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build();
+        match rt {
+            Ok(rt) => match rt.block_on(mgr.ensure_vad_model()) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    log::warn!("VAD download failed, continuing without: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                log::warn!("Failed to create runtime for VAD download: {e}");
+                None
+            }
+        }
+    };
+
+    match recorder::AudioRecorder::new(vad_path.as_deref()) {
+        Ok(rec) => {
+            dm.set_recorder(rec);
+            if vad_path.is_some() {
+                log::info!("Audio recorder ready (with VAD)");
+            } else {
+                log::info!("Audio recorder ready (no VAD)");
+            }
+        }
+        Err(e) => log::error!("Failed to create audio recorder: {e}"),
+    }
+
+    // Load first available Parakeet model
+    if let Some((id, (enc, dec, joi, tok))) = mgr.first_downloaded_parakeet() {
+        log::info!("Loading transcription model: {id}");
+        match transcribe::Transcriber::new(&enc, &dec, &joi, &tok) {
+            Ok(t) => {
+                dm.set_transcriber(t);
+                log::info!("Transcription model ready: {id}");
+            }
+            Err(e) => log::warn!("Failed to load transcription model: {e}"),
+        }
+    } else {
+        log::info!("No Parakeet model downloaded yet");
+    }
 }

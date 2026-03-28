@@ -51,19 +51,39 @@ pub struct ModelManager {
 
 impl ModelManager {
     pub fn new() -> Result<Self, String> {
-        let home = dirs::home_dir().ok_or("no home dir")?;
-        let base_dir = home.join("Library/Application Support/scribe/models");
+        let base_dir = Self::default_base_dir()?;
         std::fs::create_dir_all(&base_dir).map_err(|e| format!("create models dir: {e}"))?;
 
-        let meetily_dir = home.join("Library/Application Support/com.meetily.ai/models");
+        let mut alt_dirs = Vec::new();
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(home) = dirs::home_dir() {
+                alt_dirs.push(home.join("Library/Application Support/com.meetily.ai/models"));
+            }
+        }
 
         Ok(Self {
             base_dir,
-            alt_dirs: vec![meetily_dir],
+            alt_dirs,
             registry: builtin_registry(),
             progress: Mutex::new(HashMap::new()),
             active_model: Mutex::new(String::new()),
         })
+    }
+
+    fn default_base_dir() -> Result<PathBuf, String> {
+        #[cfg(target_os = "android")]
+        {
+            std::env::var_os("SCRIBE_DATA_DIR")
+                .map(|d| PathBuf::from(d).join("models"))
+                .ok_or_else(|| "SCRIBE_DATA_DIR not set".into())
+        }
+        #[cfg(not(target_os = "android"))]
+        {
+            dirs::data_dir()
+                .map(|d| d.join("scribe").join("models"))
+                .ok_or_else(|| "no data dir".into())
+        }
     }
 
     pub fn set_active(&self, id: &str) -> Result<(), String> {
@@ -148,6 +168,43 @@ impl ModelManager {
             }
         }
         None
+    }
+
+    /// Path where the Silero VAD model should live.
+    pub fn vad_model_path(&self) -> PathBuf {
+        self.base_dir.join("silero_vad.onnx")
+    }
+
+    /// Download the Silero VAD model if not already present.
+    pub async fn ensure_vad_model(&self) -> Result<PathBuf, String> {
+        let path = self.vad_model_path();
+        if path.exists() {
+            return Ok(path);
+        }
+
+        log::info!("Downloading Silero VAD model...");
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(SILERO_VAD_URL)
+            .send()
+            .await
+            .map_err(|e| format!("VAD download: {e}"))?;
+
+        if !resp.status().is_success() {
+            return Err(format!("VAD download HTTP {}", resp.status()));
+        }
+
+        let bytes = resp.bytes().await.map_err(|e| format!("VAD read: {e}"))?;
+        let tmp = path.with_extension("tmp");
+        tokio::fs::write(&tmp, &bytes)
+            .await
+            .map_err(|e| format!("VAD write: {e}"))?;
+        tokio::fs::rename(&tmp, &path)
+            .await
+            .map_err(|e| format!("VAD rename: {e}"))?;
+
+        log::info!("Silero VAD model downloaded ({} KB)", bytes.len() / 1024);
+        Ok(path)
     }
 
     pub fn is_downloaded(&self, id: &str) -> bool {
@@ -250,6 +307,9 @@ impl ModelManager {
 
 // ── Registry ──
 
+const SILERO_VAD_URL: &str =
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
+
 const HF_WHISPER: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
 const HF_PARAKEET_V2: &str =
     "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2/resolve/main";
@@ -344,4 +404,173 @@ fn builtin_registry() -> Vec<ModelDef> {
             ],
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn test_manager(dir: &std::path::Path) -> ModelManager {
+        ModelManager {
+            base_dir: dir.to_path_buf(),
+            alt_dirs: vec![],
+            registry: builtin_registry(),
+            progress: Mutex::new(HashMap::new()),
+            active_model: Mutex::new(String::new()),
+        }
+    }
+
+    #[test]
+    fn registry_has_whisper_and_parakeet() {
+        let registry = builtin_registry();
+        let whisper_count = registry.iter().filter(|m| m.engine == "whisper").count();
+        let parakeet_count = registry.iter().filter(|m| m.engine == "parakeet").count();
+        assert!(whisper_count >= 3, "expected at least 3 whisper models");
+        assert!(parakeet_count >= 2, "expected at least 2 parakeet models");
+    }
+
+    #[test]
+    fn registry_ids_are_unique() {
+        let registry = builtin_registry();
+        let mut ids: Vec<&str> = registry.iter().map(|m| m.id.as_str()).collect();
+        let original_len = ids.len();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), original_len, "duplicate model IDs in registry");
+    }
+
+    #[test]
+    fn find_existing_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+        assert!(mgr.find("whisper-base.en").is_some());
+        assert!(mgr.find("parakeet-tdt-0.6b-v3-int8").is_some());
+    }
+
+    #[test]
+    fn find_nonexistent_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+        assert!(mgr.find("nonexistent-model").is_none());
+    }
+
+    #[test]
+    fn not_downloaded_when_files_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+        assert!(!mgr.is_downloaded("whisper-base.en"));
+        assert!(!mgr.is_downloaded("parakeet-tdt-0.6b-v2-int8"));
+    }
+
+    #[test]
+    fn downloaded_when_files_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+
+        // Create the whisper model file
+        let model_path = dir.path().join("ggml-base.en.bin");
+        fs::write(&model_path, b"fake model").unwrap();
+
+        assert!(mgr.is_downloaded("whisper-base.en"));
+    }
+
+    #[test]
+    fn parakeet_requires_all_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+
+        // Create only encoder, not decoder/joiner/tokens
+        let enc_dir = dir.path().join("parakeet/v2-int8");
+        fs::create_dir_all(&enc_dir).unwrap();
+        fs::write(enc_dir.join("encoder.int8.onnx"), b"fake").unwrap();
+
+        assert!(!mgr.is_downloaded("parakeet-tdt-0.6b-v2-int8"));
+
+        // Add the rest
+        fs::write(enc_dir.join("decoder.int8.onnx"), b"fake").unwrap();
+        fs::write(enc_dir.join("joiner.int8.onnx"), b"fake").unwrap();
+        fs::write(enc_dir.join("tokens.txt"), b"fake").unwrap();
+
+        assert!(mgr.is_downloaded("parakeet-tdt-0.6b-v2-int8"));
+    }
+
+    #[test]
+    fn parakeet_paths_returns_all_four() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+
+        let enc_dir = dir.path().join("parakeet/v2-int8");
+        fs::create_dir_all(&enc_dir).unwrap();
+        fs::write(enc_dir.join("encoder.int8.onnx"), b"fake").unwrap();
+        fs::write(enc_dir.join("decoder.int8.onnx"), b"fake").unwrap();
+        fs::write(enc_dir.join("joiner.int8.onnx"), b"fake").unwrap();
+        fs::write(enc_dir.join("tokens.txt"), b"fake").unwrap();
+
+        let (enc, dec, joi, tok) = mgr.parakeet_paths("parakeet-tdt-0.6b-v2-int8").unwrap();
+        assert!(enc.contains("encoder.int8.onnx"));
+        assert!(dec.contains("decoder.int8.onnx"));
+        assert!(joi.contains("joiner.int8.onnx"));
+        assert!(tok.contains("tokens.txt"));
+    }
+
+    #[test]
+    fn set_active_requires_downloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+        assert!(mgr.set_active("whisper-base.en").is_err());
+    }
+
+    #[test]
+    fn list_shows_all_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+        let list = mgr.list();
+        assert_eq!(list.len(), builtin_registry().len());
+        assert!(list.iter().all(|m| m.status == "not_downloaded"));
+    }
+
+    #[test]
+    fn list_shows_downloaded_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+
+        fs::write(dir.path().join("ggml-base.en.bin"), b"fake").unwrap();
+
+        let list = mgr.list();
+        let base = list.iter().find(|m| m.id == "whisper-base.en").unwrap();
+        assert_eq!(base.status, "downloaded");
+    }
+
+    #[test]
+    fn vad_model_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+        assert_eq!(mgr.vad_model_path(), dir.path().join("silero_vad.onnx"));
+    }
+
+    #[test]
+    fn first_downloaded_parakeet_prefers_int8() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+
+        // Create v2 (non-int8)
+        let v2_dir = dir.path().join("parakeet/v2");
+        fs::create_dir_all(&v2_dir).unwrap();
+        fs::write(v2_dir.join("encoder.onnx"), b"fake").unwrap();
+        fs::write(v2_dir.join("decoder.onnx"), b"fake").unwrap();
+        fs::write(v2_dir.join("joiner.onnx"), b"fake").unwrap();
+        fs::write(v2_dir.join("tokens.txt"), b"fake").unwrap();
+
+        // Create v2-int8
+        let v2i_dir = dir.path().join("parakeet/v2-int8");
+        fs::create_dir_all(&v2i_dir).unwrap();
+        fs::write(v2i_dir.join("encoder.int8.onnx"), b"fake").unwrap();
+        fs::write(v2i_dir.join("decoder.int8.onnx"), b"fake").unwrap();
+        fs::write(v2i_dir.join("joiner.int8.onnx"), b"fake").unwrap();
+        fs::write(v2i_dir.join("tokens.txt"), b"fake").unwrap();
+
+        let (id, _) = mgr.first_downloaded_parakeet().unwrap();
+        assert_eq!(id, "parakeet-tdt-0.6b-v2-int8");
+    }
 }

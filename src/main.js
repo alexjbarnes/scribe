@@ -17,6 +17,124 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
+// ── Dictation tab ──
+
+let isRecording = false;
+const recordBtn = document.getElementById('record-btn');
+const recordStatus = document.getElementById('record-status');
+const transcriptionOutput = document.getElementById('transcription-output');
+const placeholder = document.getElementById('transcription-placeholder');
+
+async function ensureMicPermission() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    // Stop immediately -- we only needed this to trigger the permission dialog.
+    // The actual recording is done natively via cpal/oboe.
+    stream.getTracks().forEach(t => t.stop());
+    return true;
+  } catch (e) {
+    console.error('Microphone permission denied:', e);
+    return false;
+  }
+}
+
+recordBtn.addEventListener('click', async () => {
+  if (isRecording) {
+    // Stop recording
+    setRecordingUI(false);
+    recordStatus.textContent = 'Transcribing...';
+    try {
+      await invoke('stop_dictation');
+    } catch (err) {
+      console.error('Stop failed:', err);
+      recordStatus.textContent = 'Error: ' + err;
+    }
+  } else {
+    // Request mic permission on first use.
+    // On Android, getUserMedia opens a WebView audio stream that can conflict
+    // with the native Oboe stream. Only call it for the permission prompt,
+    // and only if we haven't already gotten permission.
+    const isAndroid = /android/i.test(navigator.userAgent);
+    if (!isAndroid || !window._micPermissionGranted) {
+      const ok = await ensureMicPermission();
+      if (!ok) {
+        recordStatus.textContent = 'Microphone permission denied';
+        return;
+      }
+      window._micPermissionGranted = true;
+      // On Android, wait for WebView to fully release the mic
+      if (isAndroid) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
+    setRecordingUI(true);
+    try {
+      await invoke('start_dictation');
+    } catch (err) {
+      console.error('Start failed:', err);
+      setRecordingUI(false);
+      recordStatus.textContent = 'Error: ' + err;
+    }
+  }
+});
+
+function setRecordingUI(recording) {
+  isRecording = recording;
+  if (recording) {
+    recordBtn.classList.remove('bg-accent');
+    recordBtn.classList.add('bg-red-500', 'recording');
+    recordStatus.textContent = 'Recording...';
+  } else {
+    recordBtn.classList.remove('bg-red-500', 'recording');
+    recordBtn.classList.add('bg-accent');
+  }
+}
+
+// Backend state events keep UI in sync (e.g. when desktop hotkey triggers recording)
+listen('dictation-state', (event) => {
+  const state = event.payload.state;
+  switch (state) {
+    case 'recording':
+      setRecordingUI(true);
+      break;
+    case 'transcribing':
+      setRecordingUI(false);
+      recordStatus.textContent = 'Transcribing...';
+      break;
+    case 'idle':
+      setRecordingUI(false);
+      recordStatus.textContent = 'Ready';
+      break;
+    case 'error':
+      setRecordingUI(false);
+      // Keep existing error message if one was set by dictation-error
+      if (!recordStatus.textContent.startsWith('Error:')) {
+        recordStatus.textContent = 'Error occurred';
+      }
+      break;
+  }
+});
+
+listen('dictation-error', (event) => {
+  const msg = event.payload.error;
+  console.error('Dictation error:', msg);
+  setRecordingUI(false);
+  recordStatus.textContent = 'Error: ' + msg;
+});
+
+listen('transcription-result', (event) => {
+  const text = event.payload.text;
+  if (placeholder) placeholder.remove();
+
+  const p = document.createElement('p');
+  p.textContent = text;
+  p.className = 'mb-2 leading-relaxed';
+  transcriptionOutput.appendChild(p);
+  transcriptionOutput.scrollTop = transcriptionOutput.scrollHeight;
+
+  recordStatus.textContent = 'Ready';
+});
+
 // ── Models tab ──
 
 function renderModelRow(model) {
@@ -185,6 +303,35 @@ async function saveConfig() {
     alert(`Save failed: ${err}`);
   }
 }
+
+// ── Debug tab ──
+
+const logOutput = document.getElementById('log-output');
+
+listen('log-message', (event) => {
+  const { level, line } = event.payload;
+  const el = document.createElement('div');
+  el.textContent = line;
+  if (level === 'ERROR') el.className = 'text-red-400';
+  else if (level === 'WARN') el.className = 'text-yellow-400';
+  else if (level === 'DEBUG') el.className = 'text-gray-500';
+  else el.className = 'text-gray-300';
+  logOutput.appendChild(el);
+  logOutput.scrollTop = logOutput.scrollHeight;
+});
+
+document.getElementById('clear-logs').addEventListener('click', () => {
+  logOutput.innerHTML = '';
+});
+
+document.getElementById('copy-logs').addEventListener('click', () => {
+  const text = logOutput.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.getElementById('copy-logs');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+  });
+});
 
 // ── Init ──
 
