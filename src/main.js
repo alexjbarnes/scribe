@@ -6,13 +6,13 @@ const { listen } = window.__TAURI__.event;
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.tab-btn').forEach(b => {
-      b.classList.remove('border-accent', 'text-accent');
-      b.classList.add('border-transparent', 'text-gray-500');
+      b.classList.remove('border-primary', 'text-primary');
+      b.classList.add('border-transparent', 'text-on-surface-variant');
     });
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
 
-    btn.classList.remove('border-transparent', 'text-gray-500');
-    btn.classList.add('border-accent', 'text-accent');
+    btn.classList.remove('border-transparent', 'text-on-surface-variant');
+    btn.classList.add('border-primary', 'text-primary');
     document.getElementById(btn.dataset.tab).classList.remove('hidden');
   });
 });
@@ -55,13 +55,16 @@ function formatAudioDuration(ms) {
 function renderHistory(entries) {
   historyList.innerHTML = '';
   if (!entries || entries.length === 0) {
-    historyList.innerHTML = '<p class="text-gray-500 text-center mt-8 text-sm">No transcriptions yet</p>';
+    historyList.innerHTML = `
+      <div class="flex flex-col items-center justify-center pt-16 text-on-surface-variant">
+        <span class="material-symbols-outlined text-4xl mb-3 opacity-30">history</span>
+        <p class="text-sm">No transcriptions yet</p>
+      </div>`;
     return;
   }
-  // Show newest first
   for (const entry of [...entries].reverse()) {
     const card = document.createElement('div');
-    card.className = 'bg-surface rounded-lg border border-card-border p-4';
+    card.className = 'bg-surface-container-low rounded-xl border border-outline-variant/20 p-4';
 
     const stats = [
       formatTimestamp(entry.timestamp),
@@ -72,8 +75,8 @@ function renderHistory(entries) {
     ].filter(Boolean);
 
     card.innerHTML = `
-      <p class="text-sm text-gray-200 leading-relaxed mb-2">${escapeHtml(entry.text)}</p>
-      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+      <p class="text-sm text-on-surface leading-relaxed mb-2">${escapeHtml(entry.text)}</p>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-on-surface-variant">
         ${stats.map(s => '<span>' + s + '</span>').join('')}
       </div>`;
     historyList.appendChild(card);
@@ -124,32 +127,35 @@ function renderModelRow(model) {
   const isDownloaded = model.status === 'downloaded';
   const isDownloading = model.status === 'downloading';
 
-  const deleteBtn = `<button class="del-btn text-xs font-medium px-2 py-1.5 text-gray-500 hover:text-red-400 transition-colors cursor-pointer" data-id="${model.id}" title="Delete">&#x2715;</button>`;
+  const deleteBtn = `<button class="del-btn text-on-surface-variant hover:text-error transition-colors cursor-pointer p-1.5 rounded-lg hover:bg-error/10" data-id="${model.id}" title="Delete"><span class="material-symbols-outlined text-base">delete</span></button>`;
 
   let actionHtml;
   if (isActive) {
-    actionHtml = `<span class="text-xs text-accent font-medium px-3 py-1.5 bg-accent/10 rounded-md">Active</span>${deleteBtn}`;
+    actionHtml = `<span class="text-xs text-primary font-semibold px-3 py-1.5 bg-primary/10 rounded-lg">Active</span>${deleteBtn}`;
   } else if (isDownloaded) {
-    actionHtml = `<button class="use-btn text-xs font-medium px-3 py-1.5 bg-accent text-gray-900 rounded-md hover:bg-accent-hover transition-colors cursor-pointer" data-id="${model.id}">Use</button>${deleteBtn}`;
+    actionHtml = `<button class="use-btn text-xs font-semibold px-3 py-1.5 bg-primary text-on-primary rounded-lg hover:brightness-110 transition-all cursor-pointer" data-id="${model.id}">Use</button>${deleteBtn}`;
   } else if (isDownloading) {
     const pct = Math.round(model.progress * 100);
     actionHtml = `
       <div class="w-28" id="progress-${model.id}">
         <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-        <span class="text-[10px] text-gray-500 mt-1 block text-right">${pct}%</span>
+        <span class="text-[10px] text-on-surface-variant mt-1 block text-right">${pct}%</span>
       </div>`;
   } else {
-    actionHtml = `<button class="dl-btn text-xs font-medium px-3 py-1.5 border border-card-border text-gray-300 rounded-md hover:bg-card transition-colors cursor-pointer" data-id="${model.id}">Download</button>`;
+    actionHtml = `<button class="dl-btn text-xs font-semibold px-3 py-1.5 border border-outline-variant/30 text-on-surface rounded-lg hover:bg-surface-container-highest transition-colors cursor-pointer" data-id="${model.id}">Download</button>`;
   }
 
   return `
     <div class="flex items-center justify-between px-4 py-3" data-model-id="${model.id}">
-      <div class="min-w-0 flex-1 mr-4">
-        <div class="text-sm font-medium ${isActive ? 'text-accent' : 'text-gray-200'}">${model.name}</div>
-        <div class="text-xs text-gray-500 mt-0.5">${model.desc}</div>
+      <div class="flex items-center gap-3 min-w-0 flex-1 mr-4">
+        <span class="material-symbols-outlined text-lg ${isActive ? 'text-primary' : 'text-on-surface-variant'}">layers</span>
+        <div class="min-w-0">
+          <div class="text-sm font-medium ${isActive ? 'text-primary' : 'text-on-surface'}">${model.name}</div>
+          <div class="text-xs text-on-surface-variant mt-0.5">${model.desc}</div>
+        </div>
       </div>
       <div class="flex items-center gap-3 shrink-0">
-        <span class="text-xs font-mono text-gray-500">${model.size}</span>
+        <span class="text-xs font-mono text-on-surface-variant">${model.size}</span>
         ${actionHtml}
       </div>
     </div>`;
@@ -237,7 +243,7 @@ listen('download-progress', (event) => {
       wrapper.id = `progress-${id}`;
       wrapper.innerHTML = `
         <div class="progress-bar"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
-        <span class="text-[10px] text-gray-500 mt-1 block text-right">${pct}%</span>`;
+        <span class="text-[10px] text-on-surface-variant mt-1 block text-right">${pct}%</span>`;
       actionArea.replaceWith(wrapper);
       progressEl = wrapper;
     }
