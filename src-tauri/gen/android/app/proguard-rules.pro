@@ -19,3 +19,11 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# Keep JNI native methods for accessibility service
+-keep class com.alexb151.scribe.ScribeAccessibilityService {
+    native <methods>;
+}
+-keep class com.alexb151.scribe.ScribeApp {
+    *;
+}

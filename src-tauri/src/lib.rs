@@ -3,6 +3,7 @@ mod config;
 mod coordinator;
 mod debug_log;
 mod dictation;
+mod history;
 mod models;
 #[cfg(desktop)]
 mod paste;
@@ -11,6 +12,8 @@ mod recorder;
 mod sound;
 mod transcribe;
 mod vad;
+#[cfg(target_os = "android")]
+mod android_ime;
 
 use std::sync::Arc;
 
@@ -39,6 +42,16 @@ fn save_config(cfg: config::AppConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn list_history(state: tauri::State<'_, history::History>) -> Vec<history::HistoryEntry> {
+    state.list()
+}
+
+#[tauri::command]
+fn clear_history(state: tauri::State<'_, history::History>) {
+    state.clear()
+}
+
+#[tauri::command]
 fn switch_model(state: tauri::State<'_, models::ModelManager>, id: String) -> Result<(), String> {
     state.set_active(&id)?;
     log::info!("Switched to model: {id}");
@@ -54,6 +67,11 @@ async fn download_model(app: tauri::AppHandle, id: String) -> Result<(), String>
     }
 
     mgr.download(&id, &app).await
+}
+
+#[tauri::command]
+fn delete_model(state: tauri::State<'_, models::ModelManager>, id: String) -> Result<(), String> {
+    state.delete(&id)
 }
 
 #[tauri::command]
@@ -157,6 +175,7 @@ pub fn run() {
             debug_log::set_app_handle(app.handle().clone());
 
             app.manage(model_manager);
+            app.manage(history::History::new());
             app.manage(dictation_manager.clone());
 
             // Desktop: system tray and hide-on-close
@@ -223,9 +242,12 @@ pub fn run() {
             get_config,
             save_config,
             download_model,
+            delete_model,
             switch_model,
             start_dictation,
             stop_dictation,
+            list_history,
+            clear_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -271,10 +293,10 @@ fn background_init(app_handle: &tauri::AppHandle) {
         Err(e) => log::error!("Failed to create audio recorder: {e}"),
     }
 
-    // Load first available Parakeet model
-    if let Some((id, (enc, dec, joi, tok))) = mgr.first_downloaded_parakeet() {
+    // Load first available model
+    if let Some((id, engine)) = mgr.first_downloaded_model() {
         log::info!("Loading transcription model: {id}");
-        match transcribe::Transcriber::new(&enc, &dec, &joi, &tok) {
+        match transcribe::Transcriber::new(engine) {
             Ok(t) => {
                 dm.set_transcriber(t);
                 log::info!("Transcription model ready: {id}");
@@ -282,6 +304,6 @@ fn background_init(app_handle: &tauri::AppHandle) {
             Err(e) => log::warn!("Failed to load transcription model: {e}"),
         }
     } else {
-        log::info!("No Parakeet model downloaded yet");
+        log::info!("No transcription model downloaded yet");
     }
 }

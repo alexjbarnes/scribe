@@ -9,6 +9,9 @@ use crate::vad::Vad;
 const TARGET_SAMPLE_RATE: i32 = 16_000;
 const MAX_STREAM_RETRIES: u32 = 3;
 const RETRY_DELAY_MS: u64 = 500;
+/// Force-split VAD segments that exceed this duration so the background
+/// transcriber can work on them during recording instead of waiting until stop.
+const MAX_SEGMENT_SECS: f32 = 10.0;
 
 /// Linear interpolation resampler (replaces sherpa_onnx::LinearResampler to
 /// avoid pulling in session.cc.o which contains an unresolvable NNAPI symbol
@@ -78,7 +81,9 @@ impl LinearResampler {
 }
 
 enum Cmd {
-    Start,
+    Start {
+        segment_tx: Option<mpsc::Sender<Vec<f32>>>,
+    },
     Stop,
 }
 
@@ -149,11 +154,28 @@ impl AudioRecorder {
 
     pub fn start(&self) -> Result<(), String> {
         self.cmd_tx
-            .send(Cmd::Start)
+            .send(Cmd::Start { segment_tx: None })
             .map_err(|_| "recorder thread dead".to_string())?;
 
         match self.event_rx.recv() {
             Ok(Event::Started) => Ok(()),
+            Ok(Event::Error(e)) => Err(e),
+            Ok(Event::Stopped(_)) => Err("unexpected stop event".into()),
+            Err(_) => Err("recorder thread dead".into()),
+        }
+    }
+
+    /// Start recording and return a channel that receives completed VAD speech
+    /// segments during recording. When stop() is called, the channel closes
+    /// and stop() returns only the remaining tail audio.
+    pub fn start_streaming(&self) -> Result<mpsc::Receiver<Vec<f32>>, String> {
+        let (tx, rx) = mpsc::channel();
+        self.cmd_tx
+            .send(Cmd::Start { segment_tx: Some(tx) })
+            .map_err(|_| "recorder thread dead".to_string())?;
+
+        match self.event_rx.recv() {
+            Ok(Event::Started) => Ok(rx),
             Ok(Event::Error(e)) => Err(e),
             Ok(Event::Stopped(_)) => Err("unexpected stop event".into()),
             Err(_) => Err("recorder thread dead".into()),
@@ -177,7 +199,7 @@ impl AudioRecorder {
 fn worker(cmd_rx: mpsc::Receiver<Cmd>, event_tx: mpsc::Sender<Event>, mut vad: Option<Vad>) {
     while let Ok(cmd) = cmd_rx.recv() {
         match cmd {
-            Cmd::Start => {
+            Cmd::Start { segment_tx } => {
                 if let Some(ref mut v) = vad {
                     v.reset();
                 }
@@ -217,6 +239,7 @@ fn worker(cmd_rx: mpsc::Receiver<Cmd>, event_tx: mpsc::Sender<Event>, mut vad: O
                                 &mut handle.resampler,
                                 &mut vad,
                                 &handle.disconnected,
+                                &segment_tx,
                             );
                             drop(handle.stream);
 
@@ -346,10 +369,13 @@ fn record_loop(
     resampler: &mut Option<LinearResampler>,
     vad: &mut Option<Vad>,
     disconnected: &AtomicBool,
+    segment_tx: &Option<mpsc::Sender<Vec<f32>>>,
 ) -> (Vec<f32>, LoopExit) {
     let mut all_samples: Vec<f32> = Vec::new();
     let mut speech_samples: Vec<f32> = Vec::new();
     let mut exit_reason = LoopExit::Disconnected;
+    let max_segment_samples = (TARGET_SAMPLE_RATE as f32 * MAX_SEGMENT_SECS) as usize;
+    let mut samples_since_segment: usize = 0;
 
     loop {
         // Check for stop command
@@ -358,7 +384,7 @@ fn record_loop(
                 exit_reason = LoopExit::UserStopped;
                 break;
             }
-            Ok(Cmd::Start) => {}
+            Ok(Cmd::Start { .. }) => {}
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 exit_reason = LoopExit::UserStopped;
@@ -390,10 +416,33 @@ fn record_loop(
 
                 match vad {
                     Some(ref mut v) => {
-                        if let Some(segment) = v.accept(&resampled) {
-                            speech_samples.extend_from_slice(&segment);
-                        }
                         all_samples.extend_from_slice(&resampled);
+                        samples_since_segment += resampled.len();
+
+                        if let Some(segment) = v.accept(&resampled) {
+                            samples_since_segment = 0;
+                            if let Some(ref tx) = segment_tx {
+                                let _ = tx.send(segment);
+                            } else {
+                                speech_samples.extend_from_slice(&segment);
+                            }
+                        } else if samples_since_segment > max_segment_samples {
+                            // Force-split: flush VAD mid-speech so the
+                            // background transcriber can start working.
+                            log::info!(
+                                "Force-splitting at {:.1}s of continuous speech",
+                                samples_since_segment as f32 / TARGET_SAMPLE_RATE as f32
+                            );
+                            if let Some(segment) = v.flush() {
+                                if let Some(ref tx) = segment_tx {
+                                    let _ = tx.send(segment);
+                                } else {
+                                    speech_samples.extend_from_slice(&segment);
+                                }
+                            }
+                            v.reset();
+                            samples_since_segment = 0;
+                        }
                     }
                     None => {
                         all_samples.extend_from_slice(&resampled);
@@ -412,7 +461,11 @@ fn record_loop(
             match vad {
                 Some(ref mut v) => {
                     if let Some(segment) = v.accept(&tail) {
-                        speech_samples.extend_from_slice(&segment);
+                        if let Some(ref tx) = segment_tx {
+                            let _ = tx.send(segment);
+                        } else {
+                            speech_samples.extend_from_slice(&segment);
+                        }
                     }
                 }
                 None => {
@@ -429,7 +482,18 @@ fn record_loop(
         }
     }
 
-    let samples = if vad.is_some() && !speech_samples.is_empty() {
+    let samples = if segment_tx.is_some() && vad.is_some() {
+        // Streaming mode: segments were sent via channel during recording.
+        // Only the flushed tail remains in speech_samples.
+        let total = all_samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
+        let tail = speech_samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
+        if speech_samples.is_empty() {
+            log::info!("Streaming: all {total:.1}s handled by segments, no tail");
+        } else {
+            log::info!("Streaming: {tail:.1}s tail remaining from {total:.1}s total");
+        }
+        speech_samples
+    } else if vad.is_some() && !speech_samples.is_empty() {
         log::info!(
             "VAD kept {:.1}s of speech from {:.1}s total",
             speech_samples.len() as f32 / TARGET_SAMPLE_RATE as f32,

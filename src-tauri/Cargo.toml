@@ -30,6 +30,10 @@ tokio = { version = "1", features = ["fs", "io-util"] }
 futures-util = "0.3"
 cpal = "0.15"
 sherpa-onnx = "1.12"
+chrono = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 arboard = "3"

@@ -62,12 +62,20 @@ impl ModelManager {
             }
         }
 
+        // Restore active model from config
+        let cfg = crate::config::AppConfig::load();
+        let active = if !cfg.active_model_id.is_empty() {
+            cfg.active_model_id.clone()
+        } else {
+            String::new()
+        };
+
         Ok(Self {
             base_dir,
             alt_dirs,
             registry: builtin_registry(),
             progress: Mutex::new(HashMap::new()),
-            active_model: Mutex::new(String::new()),
+            active_model: Mutex::new(active),
         })
     }
 
@@ -91,7 +99,18 @@ impl ModelManager {
             return Err("model not downloaded".into());
         }
         *self.active_model.lock().unwrap() = id.to_string();
+
+        // Persist to config
+        let mut cfg = crate::config::AppConfig::load();
+        cfg.active_model_id = id.to_string();
+        if let Err(e) = cfg.save() {
+            log::warn!("Failed to persist active model: {e}");
+        }
         Ok(())
+    }
+
+    pub fn active_model_id(&self) -> String {
+        self.active_model.lock().unwrap().clone()
     }
 
     pub fn list(&self) -> Vec<ModelInfo> {
@@ -126,22 +145,33 @@ impl ModelManager {
         self.registry.iter().find(|m| m.id == id)
     }
 
-    /// Returns (encoder, decoder, joiner, tokens) paths for a downloaded Parakeet model.
-    pub fn parakeet_paths(&self, id: &str) -> Option<(String, String, String, String)> {
+    /// Build a `ModelEngine` for a downloaded model.
+    pub fn model_engine(&self, id: &str) -> Option<crate::transcribe::ModelEngine> {
         let model = self.find(id)?;
-        if model.engine != "parakeet" {
+        if !self.is_downloaded(id) {
             return None;
         }
-        let encoder = self.find_file_by_role(&model.files, "encoder")?;
-        let decoder = self.find_file_by_role(&model.files, "decoder")?;
-        let joiner = self.find_file_by_role(&model.files, "joiner")?;
-        let tokens = self.find_file_by_role(&model.files, "tokens")?;
-        Some((
-            encoder.to_string_lossy().into(),
-            decoder.to_string_lossy().into(),
-            joiner.to_string_lossy().into(),
-            tokens.to_string_lossy().into(),
-        ))
+
+        let path = |role: &str| -> Option<String> {
+            self.find_file_by_role(&model.files, role)
+                .map(|p| p.to_string_lossy().into_owned())
+        };
+
+        match model.engine.as_str() {
+            "parakeet" => Some(crate::transcribe::ModelEngine::Transducer {
+                encoder: path("encoder")?,
+                decoder: path("decoder")?,
+                joiner: path("joiner")?,
+                tokens: path("tokens")?,
+            }),
+            "whisper" => Some(crate::transcribe::ModelEngine::Whisper {
+                encoder: path("encoder")?,
+                decoder: path("decoder")?,
+                tokens: path("tokens")?,
+                language: "en".into(),
+            }),
+            _ => None,
+        }
     }
 
     fn find_file_by_role(&self, files: &[ModelFile], role: &str) -> Option<std::path::PathBuf> {
@@ -151,20 +181,48 @@ impl ModelManager {
             .and_then(|f| self.find_file(&f.rel_path))
     }
 
-    /// Find the first downloaded Parakeet model (prefer INT8 for speed).
-    pub fn first_downloaded_parakeet(&self) -> Option<(String, (String, String, String, String))> {
-        // Preferred order: INT8 variants first (faster/smaller)
+    /// Find the best downloaded model. Checks the active model first,
+    /// then falls back to preferred order (Parakeet INT8, then Whisper INT8).
+    pub fn first_downloaded_model(&self) -> Option<(String, crate::transcribe::ModelEngine)> {
+        // Check active model first
+        {
+            let active = self.active_model.lock().unwrap();
+            if !active.is_empty() {
+                if let Some(engine) = self.model_engine(&active) {
+                    return Some((active.clone(), engine));
+                }
+            }
+        }
+
         let preferred = [
             "parakeet-tdt-0.6b-v3-int8",
             "parakeet-tdt-0.6b-v2-int8",
             "parakeet-tdt-0.6b-v3",
             "parakeet-tdt-0.6b-v2",
+            "whisper-small.en-int8",
+            "whisper-base.en-int8",
+            "whisper-turbo-int8",
+            "whisper-medium.en-int8",
+            "whisper-large-v3-int8",
         ];
         for id in preferred {
-            if self.is_downloaded(id) {
-                if let Some(paths) = self.parakeet_paths(id) {
-                    return Some((id.to_string(), paths));
-                }
+            if let Some(engine) = self.model_engine(id) {
+                return Some((id.to_string(), engine));
+            }
+        }
+        None
+    }
+
+    /// Backwards-compatible wrapper for code that only needs Parakeet paths.
+    pub fn first_downloaded_parakeet(&self) -> Option<(String, (String, String, String, String))> {
+        for model in &self.registry {
+            if model.engine != "parakeet" || !self.is_downloaded(&model.id) {
+                continue;
+            }
+            if let Some(crate::transcribe::ModelEngine::Transducer { encoder, decoder, joiner, tokens }) =
+                self.model_engine(&model.id)
+            {
+                return Some((model.id.clone(), (encoder, decoder, joiner, tokens)));
             }
         }
         None
@@ -205,6 +263,63 @@ impl ModelManager {
 
         log::info!("Silero VAD model downloaded ({} KB)", bytes.len() / 1024);
         Ok(path)
+    }
+
+    pub fn delete(&self, id: &str) -> Result<(), String> {
+        let model = self.find(id).ok_or("unknown model")?;
+
+        // Clear active if deleting the active model
+        {
+            let mut active = self.active_model.lock().unwrap();
+            if *active == id {
+                *active = String::new();
+                let mut cfg = crate::config::AppConfig::load();
+                cfg.active_model_id = String::new();
+                let _ = cfg.save();
+            }
+        }
+
+        let mut deleted = 0u32;
+        for file in &model.files {
+            let path = self.base_dir.join(&file.rel_path);
+            if path.exists() {
+                std::fs::remove_file(&path).map_err(|e| format!("delete {}: {e}", file.rel_path))?;
+                deleted += 1;
+            }
+        }
+
+        // Clean up empty parent directories
+        for file in &model.files {
+            let path = self.base_dir.join(&file.rel_path);
+            if let Some(parent) = path.parent() {
+                let _ = Self::remove_empty_dirs(parent, &self.base_dir);
+            }
+        }
+
+        log::info!("Deleted model {id} ({deleted} files)");
+        Ok(())
+    }
+
+    /// Remove empty directories up to (but not including) `stop_at`.
+    fn remove_empty_dirs(dir: &std::path::Path, stop_at: &std::path::Path) -> std::io::Result<()> {
+        let mut current = dir.to_path_buf();
+        while current != stop_at && current.starts_with(stop_at) {
+            match std::fs::read_dir(&current) {
+                Ok(mut entries) => {
+                    if entries.next().is_none() {
+                        std::fs::remove_dir(&current)?;
+                    } else {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+            match current.parent() {
+                Some(p) => current = p.to_path_buf(),
+                None => break,
+            }
+        }
+        Ok(())
     }
 
     pub fn is_downloaded(&self, id: &str) -> bool {
@@ -310,7 +425,16 @@ impl ModelManager {
 const SILERO_VAD_URL: &str =
     "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
 
-const HF_WHISPER: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+const HF_WHISPER_BASE_EN: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base.en/resolve/main";
+const HF_WHISPER_SMALL_EN: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-small.en/resolve/main";
+const HF_WHISPER_MEDIUM_EN: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-medium.en/resolve/main";
+const HF_WHISPER_LARGE_V3: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-large-v3/resolve/main";
+const HF_WHISPER_TURBO: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-turbo/resolve/main";
 const HF_PARAKEET_V2: &str =
     "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2/resolve/main";
 const HF_PARAKEET_V2_INT8: &str =
@@ -320,32 +444,69 @@ const HF_PARAKEET_V3: &str =
 const HF_PARAKEET_V3_INT8: &str =
     "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main";
 
-fn whisper(id: &str, name: &str, desc: &str, size: &str, file: &str, bytes: u64) -> ModelDef {
-    ModelDef {
-        id: id.into(),
-        name: name.into(),
-        desc: desc.into(),
-        engine: "whisper".into(),
-        size: size.into(),
-        files: vec![ModelFile {
-            url: format!("{HF_WHISPER}/{file}"),
-            rel_path: file.into(),
-            bytes,
-            role: "model".into(),
-        }],
-    }
-}
-
 fn builtin_registry() -> Vec<ModelDef> {
     vec![
-        // Whisper
-        whisper("whisper-base.en", "Whisper Base", "English \u{2014} fast, lightweight", "142 MB", "ggml-base.en.bin", 148_000_000),
-        whisper("whisper-small.en", "Whisper Small", "English \u{2014} better accuracy, still fast", "466 MB", "ggml-small.en.bin", 488_000_000),
-        whisper("whisper-medium.en", "Whisper Medium", "English \u{2014} balanced speed and accuracy", "1.5 GB", "ggml-medium.en.bin", 1_533_000_000),
-        whisper("whisper-large-v3", "Whisper Large V3", "Multilingual \u{2014} highest accuracy, slower", "2.9 GB", "ggml-large-v3.bin", 3_094_000_000),
-        whisper("whisper-large-v3-turbo", "Whisper Large V3 Turbo", "Multilingual \u{2014} near-large accuracy, 2x faster", "1.5 GB", "ggml-large-v3-turbo.bin", 1_533_000_000),
-        whisper("whisper-large-v3-turbo-q5", "Whisper Large V3 Turbo Q5", "Multilingual \u{2014} quantized, smallest turbo", "547 MB", "ggml-large-v3-turbo-q5_0.bin", 574_000_000),
-        whisper("whisper-large-v3-turbo-q8", "Whisper Large V3 Turbo Q8", "Multilingual \u{2014} quantized, higher quality", "874 MB", "ggml-large-v3-turbo-q8_0.bin", 916_000_000),
+        // Whisper INT8 (recommended)
+        ModelDef {
+            id: "whisper-base.en-int8".into(),
+            name: "Whisper Base EN INT8".into(),
+            desc: "English \u{2014} fastest, ~152 MB".into(),
+            engine: "whisper".into(),
+            size: "~152 MB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_WHISPER_BASE_EN}/base.en-encoder.int8.onnx"), rel_path: "whisper/base.en-int8/encoder.int8.onnx".into(), bytes: 28_000_000, role: "encoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_BASE_EN}/base.en-decoder.int8.onnx"), rel_path: "whisper/base.en-int8/decoder.int8.onnx".into(), bytes: 125_000_000, role: "decoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_BASE_EN}/base.en-tokens.txt"), rel_path: "whisper/base.en-int8/tokens.txt".into(), bytes: 816_000, role: "tokens".into() },
+            ],
+        },
+        ModelDef {
+            id: "whisper-small.en-int8".into(),
+            name: "Whisper Small EN INT8".into(),
+            desc: "English \u{2014} good accuracy, fast".into(),
+            engine: "whisper".into(),
+            size: "~357 MB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_WHISPER_SMALL_EN}/small.en-encoder.int8.onnx"), rel_path: "whisper/small.en-int8/encoder.int8.onnx".into(), bytes: 107_000_000, role: "encoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_SMALL_EN}/small.en-decoder.int8.onnx"), rel_path: "whisper/small.en-int8/decoder.int8.onnx".into(), bytes: 250_000_000, role: "decoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_SMALL_EN}/small.en-tokens.txt"), rel_path: "whisper/small.en-int8/tokens.txt".into(), bytes: 816_000, role: "tokens".into() },
+            ],
+        },
+        ModelDef {
+            id: "whisper-medium.en-int8".into(),
+            name: "Whisper Medium EN INT8".into(),
+            desc: "English \u{2014} balanced accuracy and speed".into(),
+            engine: "whisper".into(),
+            size: "~945 MB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_WHISPER_MEDIUM_EN}/medium.en-encoder.int8.onnx"), rel_path: "whisper/medium.en-int8/encoder.int8.onnx".into(), bytes: 374_000_000, role: "encoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_MEDIUM_EN}/medium.en-decoder.int8.onnx"), rel_path: "whisper/medium.en-int8/decoder.int8.onnx".into(), bytes: 571_000_000, role: "decoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_MEDIUM_EN}/medium.en-tokens.txt"), rel_path: "whisper/medium.en-int8/tokens.txt".into(), bytes: 816_000, role: "tokens".into() },
+            ],
+        },
+        ModelDef {
+            id: "whisper-large-v3-int8".into(),
+            name: "Whisper Large V3 INT8".into(),
+            desc: "Multilingual \u{2014} highest accuracy".into(),
+            engine: "whisper".into(),
+            size: "~1.8 GB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_WHISPER_LARGE_V3}/large-v3-encoder.int8.onnx"), rel_path: "whisper/large-v3-int8/encoder.int8.onnx".into(), bytes: 767_000_000, role: "encoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_LARGE_V3}/large-v3-decoder.int8.onnx"), rel_path: "whisper/large-v3-int8/decoder.int8.onnx".into(), bytes: 1_010_000_000, role: "decoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_LARGE_V3}/large-v3-tokens.txt"), rel_path: "whisper/large-v3-int8/tokens.txt".into(), bytes: 797_000, role: "tokens".into() },
+            ],
+        },
+        ModelDef {
+            id: "whisper-turbo-int8".into(),
+            name: "Whisper Turbo INT8".into(),
+            desc: "Multilingual \u{2014} near-large accuracy, 2x faster".into(),
+            engine: "whisper".into(),
+            size: "~1.0 GB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_WHISPER_TURBO}/turbo-encoder.int8.onnx"), rel_path: "whisper/turbo-int8/encoder.int8.onnx".into(), bytes: 675_000_000, role: "encoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_TURBO}/turbo-decoder.int8.onnx"), rel_path: "whisper/turbo-int8/decoder.int8.onnx".into(), bytes: 361_000_000, role: "decoder".into() },
+                ModelFile { url: format!("{HF_WHISPER_TURBO}/turbo-tokens.txt"), rel_path: "whisper/turbo-int8/tokens.txt".into(), bytes: 797_000, role: "tokens".into() },
+            ],
+        },
         // Parakeet V3
         ModelDef {
             id: "parakeet-tdt-0.6b-v3".into(),
@@ -444,7 +605,7 @@ mod tests {
     fn find_existing_model() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = test_manager(dir.path());
-        assert!(mgr.find("whisper-base.en").is_some());
+        assert!(mgr.find("whisper-base.en-int8").is_some());
         assert!(mgr.find("parakeet-tdt-0.6b-v3-int8").is_some());
     }
 
@@ -459,20 +620,22 @@ mod tests {
     fn not_downloaded_when_files_missing() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = test_manager(dir.path());
-        assert!(!mgr.is_downloaded("whisper-base.en"));
+        assert!(!mgr.is_downloaded("whisper-base.en-int8"));
         assert!(!mgr.is_downloaded("parakeet-tdt-0.6b-v2-int8"));
     }
 
     #[test]
-    fn downloaded_when_files_exist() {
+    fn downloaded_when_whisper_files_exist() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = test_manager(dir.path());
 
-        // Create the whisper model file
-        let model_path = dir.path().join("ggml-base.en.bin");
-        fs::write(&model_path, b"fake model").unwrap();
+        let model_dir = dir.path().join("whisper/base.en-int8");
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(model_dir.join("encoder.int8.onnx"), b"fake").unwrap();
+        fs::write(model_dir.join("decoder.int8.onnx"), b"fake").unwrap();
+        fs::write(model_dir.join("tokens.txt"), b"fake").unwrap();
 
-        assert!(mgr.is_downloaded("whisper-base.en"));
+        assert!(mgr.is_downloaded("whisper-base.en-int8"));
     }
 
     #[test]
@@ -496,7 +659,22 @@ mod tests {
     }
 
     #[test]
-    fn parakeet_paths_returns_all_four() {
+    fn model_engine_returns_whisper() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = test_manager(dir.path());
+
+        let model_dir = dir.path().join("whisper/base.en-int8");
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(model_dir.join("encoder.int8.onnx"), b"fake").unwrap();
+        fs::write(model_dir.join("decoder.int8.onnx"), b"fake").unwrap();
+        fs::write(model_dir.join("tokens.txt"), b"fake").unwrap();
+
+        let engine = mgr.model_engine("whisper-base.en-int8").unwrap();
+        assert!(matches!(engine, crate::transcribe::ModelEngine::Whisper { .. }));
+    }
+
+    #[test]
+    fn model_engine_returns_transducer() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = test_manager(dir.path());
 
@@ -507,18 +685,15 @@ mod tests {
         fs::write(enc_dir.join("joiner.int8.onnx"), b"fake").unwrap();
         fs::write(enc_dir.join("tokens.txt"), b"fake").unwrap();
 
-        let (enc, dec, joi, tok) = mgr.parakeet_paths("parakeet-tdt-0.6b-v2-int8").unwrap();
-        assert!(enc.contains("encoder.int8.onnx"));
-        assert!(dec.contains("decoder.int8.onnx"));
-        assert!(joi.contains("joiner.int8.onnx"));
-        assert!(tok.contains("tokens.txt"));
+        let engine = mgr.model_engine("parakeet-tdt-0.6b-v2-int8").unwrap();
+        assert!(matches!(engine, crate::transcribe::ModelEngine::Transducer { .. }));
     }
 
     #[test]
     fn set_active_requires_downloaded() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = test_manager(dir.path());
-        assert!(mgr.set_active("whisper-base.en").is_err());
+        assert!(mgr.set_active("whisper-base.en-int8").is_err());
     }
 
     #[test]
@@ -535,10 +710,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mgr = test_manager(dir.path());
 
-        fs::write(dir.path().join("ggml-base.en.bin"), b"fake").unwrap();
+        let model_dir = dir.path().join("whisper/base.en-int8");
+        fs::create_dir_all(&model_dir).unwrap();
+        fs::write(model_dir.join("encoder.int8.onnx"), b"fake").unwrap();
+        fs::write(model_dir.join("decoder.int8.onnx"), b"fake").unwrap();
+        fs::write(model_dir.join("tokens.txt"), b"fake").unwrap();
 
         let list = mgr.list();
-        let base = list.iter().find(|m| m.id == "whisper-base.en").unwrap();
+        let base = list.iter().find(|m| m.id == "whisper-base.en-int8").unwrap();
         assert_eq!(base.status, "downloaded");
     }
 

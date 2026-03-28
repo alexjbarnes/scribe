@@ -17,122 +17,104 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
   });
 });
 
-// ── Dictation tab ──
+// ── History tab ──
 
-let isRecording = false;
-const recordBtn = document.getElementById('record-btn');
-const recordStatus = document.getElementById('record-status');
-const transcriptionOutput = document.getElementById('transcription-output');
-const placeholder = document.getElementById('transcription-placeholder');
+const historyList = document.getElementById('history-list');
+const historyPlaceholder = document.getElementById('history-placeholder');
 
-async function ensureMicPermission() {
+function formatDuration(ms) {
+  if (ms < 1000) return ms + 'ms';
+  return (ms / 1000).toFixed(1) + 's';
+}
+
+function formatTimestamp(iso) {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    // Stop immediately -- we only needed this to trigger the permission dialog.
-    // The actual recording is done natively via cpal/oboe.
-    stream.getTracks().forEach(t => t.stop());
-    return true;
-  } catch (e) {
-    console.error('Microphone permission denied:', e);
-    return false;
+    const d = new Date(iso);
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) +
+      ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  } catch (_) {
+    return iso;
   }
 }
 
-recordBtn.addEventListener('click', async () => {
-  if (isRecording) {
-    // Stop recording
-    setRecordingUI(false);
-    recordStatus.textContent = 'Transcribing...';
-    try {
-      await invoke('stop_dictation');
-    } catch (err) {
-      console.error('Stop failed:', err);
-      recordStatus.textContent = 'Error: ' + err;
-    }
-  } else {
-    // Request mic permission on first use.
-    // On Android, getUserMedia opens a WebView audio stream that can conflict
-    // with the native Oboe stream. Only call it for the permission prompt,
-    // and only if we haven't already gotten permission.
-    const isAndroid = /android/i.test(navigator.userAgent);
-    if (!isAndroid || !window._micPermissionGranted) {
-      const ok = await ensureMicPermission();
-      if (!ok) {
-        recordStatus.textContent = 'Microphone permission denied';
-        return;
-      }
-      window._micPermissionGranted = true;
-      // On Android, wait for WebView to fully release the mic
-      if (isAndroid) {
-        await new Promise(r => setTimeout(r, 500));
-      }
-    }
-    setRecordingUI(true);
-    try {
-      await invoke('start_dictation');
-    } catch (err) {
-      console.error('Start failed:', err);
-      setRecordingUI(false);
-      recordStatus.textContent = 'Error: ' + err;
-    }
-  }
-});
+function formatSpeed(entry) {
+  if (!entry.audio_duration_ms || !entry.duration_ms) return '';
+  const rtf = entry.duration_ms / entry.audio_duration_ms;
+  return rtf.toFixed(2) + 'x RTF';
+}
 
-function setRecordingUI(recording) {
-  isRecording = recording;
-  if (recording) {
-    recordBtn.classList.remove('bg-accent');
-    recordBtn.classList.add('bg-red-500', 'recording');
-    recordStatus.textContent = 'Recording...';
-  } else {
-    recordBtn.classList.remove('bg-red-500', 'recording');
-    recordBtn.classList.add('bg-accent');
+function formatAudioDuration(ms) {
+  if (!ms) return '';
+  const secs = ms / 1000;
+  if (secs < 60) return secs.toFixed(1) + 's spoken';
+  const mins = Math.floor(secs / 60);
+  const rem = (secs % 60).toFixed(0);
+  return mins + 'm ' + rem + 's spoken';
+}
+
+function renderHistory(entries) {
+  historyList.innerHTML = '';
+  if (!entries || entries.length === 0) {
+    historyList.innerHTML = '<p class="text-gray-500 text-center mt-8 text-sm">No transcriptions yet</p>';
+    return;
+  }
+  // Show newest first
+  for (const entry of [...entries].reverse()) {
+    const card = document.createElement('div');
+    card.className = 'bg-surface rounded-lg border border-card-border p-4';
+
+    const stats = [
+      formatTimestamp(entry.timestamp),
+      formatAudioDuration(entry.audio_duration_ms),
+      formatDuration(entry.duration_ms) + ' to transcribe',
+      formatSpeed(entry),
+      escapeHtml(entry.model_id),
+    ].filter(Boolean);
+
+    card.innerHTML = `
+      <p class="text-sm text-gray-200 leading-relaxed mb-2">${escapeHtml(entry.text)}</p>
+      <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500">
+        ${stats.map(s => '<span>' + s + '</span>').join('')}
+      </div>`;
+    historyList.appendChild(card);
   }
 }
 
-// Backend state events keep UI in sync (e.g. when desktop hotkey triggers recording)
-listen('dictation-state', (event) => {
-  const state = event.payload.state;
-  switch (state) {
-    case 'recording':
-      setRecordingUI(true);
-      break;
-    case 'transcribing':
-      setRecordingUI(false);
-      recordStatus.textContent = 'Transcribing...';
-      break;
-    case 'idle':
-      setRecordingUI(false);
-      recordStatus.textContent = 'Ready';
-      break;
-    case 'error':
-      setRecordingUI(false);
-      // Keep existing error message if one was set by dictation-error
-      if (!recordStatus.textContent.startsWith('Error:')) {
-        recordStatus.textContent = 'Error occurred';
-      }
-      break;
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+async function loadHistory() {
+  try {
+    const entries = await invoke('list_history');
+    renderHistory(entries);
+  } catch (err) {
+    console.error('Failed to load history:', err);
+  }
+}
+
+// Auto-refresh history when the app comes back to foreground
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    loadHistory();
   }
 });
 
-listen('dictation-error', (event) => {
-  const msg = event.payload.error;
-  console.error('Dictation error:', msg);
-  setRecordingUI(false);
-  recordStatus.textContent = 'Error: ' + msg;
+// Refresh history when a transcription completes (in-app dictation path)
+listen('transcription-result', () => {
+  loadHistory();
 });
 
-listen('transcription-result', (event) => {
-  const text = event.payload.text;
-  if (placeholder) placeholder.remove();
-
-  const p = document.createElement('p');
-  p.textContent = text;
-  p.className = 'mb-2 leading-relaxed';
-  transcriptionOutput.appendChild(p);
-  transcriptionOutput.scrollTop = transcriptionOutput.scrollHeight;
-
-  recordStatus.textContent = 'Ready';
+document.getElementById('clear-history').addEventListener('click', async () => {
+  if (!confirm('Clear all history?')) return;
+  try {
+    await invoke('clear_history');
+    renderHistory([]);
+  } catch (err) {
+    console.error('Failed to clear history:', err);
+  }
 });
 
 // ── Models tab ──
@@ -142,11 +124,13 @@ function renderModelRow(model) {
   const isDownloaded = model.status === 'downloaded';
   const isDownloading = model.status === 'downloading';
 
+  const deleteBtn = `<button class="del-btn text-xs font-medium px-2 py-1.5 text-gray-500 hover:text-red-400 transition-colors cursor-pointer" data-id="${model.id}" title="Delete">&#x2715;</button>`;
+
   let actionHtml;
   if (isActive) {
-    actionHtml = `<span class="text-xs text-accent font-medium px-3 py-1.5 bg-accent/10 rounded-md">Active</span>`;
+    actionHtml = `<span class="text-xs text-accent font-medium px-3 py-1.5 bg-accent/10 rounded-md">Active</span>${deleteBtn}`;
   } else if (isDownloaded) {
-    actionHtml = `<button class="use-btn text-xs font-medium px-3 py-1.5 bg-accent text-gray-900 rounded-md hover:bg-accent-hover transition-colors cursor-pointer" data-id="${model.id}">Use</button>`;
+    actionHtml = `<button class="use-btn text-xs font-medium px-3 py-1.5 bg-accent text-gray-900 rounded-md hover:bg-accent-hover transition-colors cursor-pointer" data-id="${model.id}">Use</button>${deleteBtn}`;
   } else if (isDownloading) {
     const pct = Math.round(model.progress * 100);
     actionHtml = `
@@ -213,6 +197,21 @@ async function loadModels() {
       } catch (err) {
         console.error('Switch failed:', err);
         alert(`Failed to switch model: ${err}`);
+      }
+      await loadModels();
+    });
+  });
+
+  // Attach delete button handlers
+  document.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.id;
+      if (!confirm(`Delete model ${id}?`)) return;
+      try {
+        await invoke('delete_model', { id });
+      } catch (err) {
+        console.error('Delete failed:', err);
+        alert(`Failed to delete model: ${err}`);
       }
       await loadModels();
     });
@@ -336,6 +335,7 @@ document.getElementById('copy-logs').addEventListener('click', () => {
 // ── Init ──
 
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadHistory();
   await loadModels();
   await loadAudioDevices();
   await loadConfig();

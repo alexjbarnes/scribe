@@ -84,9 +84,9 @@ impl DictationManager {
             return true;
         }
         let mgr = app_handle.state::<ModelManager>();
-        if let Some((id, (enc, dec, joi, tok))) = mgr.first_downloaded_parakeet() {
+        if let Some((id, engine)) = mgr.first_downloaded_model() {
             log::info!("Loading transcription model on demand: {id}");
-            match Transcriber::new(&enc, &dec, &joi, &tok) {
+            match Transcriber::new(engine) {
                 Ok(t) => {
                     *transcriber = Some(t);
                     log::info!("Transcription model ready: {id}");
@@ -98,7 +98,7 @@ impl DictationManager {
                 }
             }
         } else {
-            self.emit_error("No Parakeet model downloaded yet");
+            self.emit_error("No transcription model downloaded yet");
             false
         }
     }
@@ -151,6 +151,7 @@ impl DictationManager {
 
         self.emit_state("transcribing");
 
+        let start = std::time::Instant::now();
         let text = {
             let guard = self.transcriber.lock().unwrap();
             if let Some(ref transcriber) = *guard {
@@ -170,6 +171,16 @@ impl DictationManager {
                 return;
             }
         };
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        // Record in history
+        let audio_duration_ms = (duration * 1000.0) as u64;
+        if let Some(ref handle) = *self.app_handle.lock().unwrap() {
+            let model_id = handle.state::<ModelManager>().active_model_id();
+            handle
+                .state::<crate::history::History>()
+                .add(text.clone(), model_id, duration_ms, audio_duration_ms);
+        }
 
         // Emit result to frontend
         if let Some(ref handle) = *self.app_handle.lock().unwrap() {

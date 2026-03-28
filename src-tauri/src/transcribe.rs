@@ -3,6 +3,23 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::Instant;
 
+/// Which engine/config to use when creating the recognizer.
+#[derive(Clone, Debug)]
+pub enum ModelEngine {
+    Transducer {
+        encoder: String,
+        decoder: String,
+        joiner: String,
+        tokens: String,
+    },
+    Whisper {
+        encoder: String,
+        decoder: String,
+        tokens: String,
+        language: String,
+    },
+}
+
 struct Request {
     samples: Vec<f32>,
     sample_rate: i32,
@@ -22,42 +39,52 @@ pub struct Transcriber {
 impl Transcriber {
     /// Validate model files and spawn the worker thread. The ONNX model
     /// is loaded lazily on the first transcription call.
-    pub fn new(
-        encoder: &str,
-        decoder: &str,
-        joiner: &str,
-        tokens: &str,
-    ) -> Result<Self, String> {
-        for (name, path) in [
-            ("encoder", encoder),
-            ("decoder", decoder),
-            ("joiner", joiner),
-            ("tokens", tokens),
-        ] {
-            if !Path::new(path).exists() {
-                return Err(format!("model file not found: {name} at {path}"));
+    pub fn new(engine: ModelEngine) -> Result<Self, String> {
+        match &engine {
+            ModelEngine::Transducer { encoder, decoder, joiner, tokens } => {
+                for (name, path) in [
+                    ("encoder", encoder.as_str()),
+                    ("decoder", decoder.as_str()),
+                    ("joiner", joiner.as_str()),
+                    ("tokens", tokens.as_str()),
+                ] {
+                    if !Path::new(path).exists() {
+                        return Err(format!("model file not found: {name} at {path}"));
+                    }
+                }
+            }
+            ModelEngine::Whisper { encoder, decoder, tokens, .. } => {
+                for (name, path) in [
+                    ("encoder", encoder.as_str()),
+                    ("decoder", decoder.as_str()),
+                    ("tokens", tokens.as_str()),
+                ] {
+                    if !Path::new(path).exists() {
+                        return Err(format!("model file not found: {name} at {path}"));
+                    }
+                }
             }
         }
 
-        let model_dir = Path::new(encoder)
-            .parent()
-            .unwrap_or(Path::new("."))
-            .to_string_lossy()
-            .into_owned();
-
-        let enc = encoder.to_string();
-        let dec = decoder.to_string();
-        let joi = joiner.to_string();
-        let tok = tokens.to_string();
+        let model_dir = match &engine {
+            ModelEngine::Transducer { encoder, .. } | ModelEngine::Whisper { encoder, .. } => {
+                Path::new(encoder)
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .to_string_lossy()
+                    .into_owned()
+            }
+        };
 
         let (req_tx, req_rx) = mpsc::channel::<Request>();
 
         log::info!("Transcriber ready (model dir: {model_dir})");
 
+        let engine_clone = engine.clone();
         std::thread::Builder::new()
             .name("transcriber".into())
             .spawn(move || {
-                worker(req_rx, &model_dir, &enc, &dec, &joi, &tok);
+                worker(req_rx, &model_dir, &engine_clone);
             })
             .map_err(|e| format!("spawn transcriber thread: {e}"))?;
 
@@ -89,36 +116,48 @@ impl Transcriber {
     }
 }
 
+fn create_recognizer(
+    engine: &ModelEngine,
+) -> Option<sherpa_onnx::OfflineRecognizer> {
+    let mut config = sherpa_onnx::OfflineRecognizerConfig::default();
+    config.model_config.num_threads = 4;
+    config.model_config.provider = Some("cpu".into());
+
+    match engine {
+        ModelEngine::Transducer { encoder, decoder, joiner, tokens } => {
+            config.model_config.transducer.encoder = Some(encoder.clone());
+            config.model_config.transducer.decoder = Some(decoder.clone());
+            config.model_config.transducer.joiner = Some(joiner.clone());
+            config.model_config.tokens = Some(tokens.clone());
+            config.model_config.model_type = Some("nemo_transducer".into());
+        }
+        ModelEngine::Whisper { encoder, decoder, tokens, language } => {
+            config.model_config.whisper.encoder = Some(encoder.clone());
+            config.model_config.whisper.decoder = Some(decoder.clone());
+            config.model_config.tokens = Some(tokens.clone());
+            config.model_config.whisper.language = Some(language.clone());
+            config.model_config.whisper.task = Some("transcribe".into());
+        }
+    }
+
+    sherpa_onnx::OfflineRecognizer::create(&config)
+}
+
 fn worker(
     req_rx: mpsc::Receiver<Request>,
     model_dir: &str,
-    encoder: &str,
-    decoder: &str,
-    joiner: &str,
-    tokens: &str,
+    engine: &ModelEngine,
 ) {
     let _ = std::env::set_current_dir(model_dir);
 
-    // Load model on first request
     let mut recognizer: Option<sherpa_onnx::OfflineRecognizer> = None;
 
     while let Ok(req) = req_rx.recv() {
         let total_start = Instant::now();
 
-        // Lazy-load the recognizer
         if recognizer.is_none() {
             let load_start = Instant::now();
-
-            let mut config = sherpa_onnx::OfflineRecognizerConfig::default();
-            config.model_config.transducer.encoder = Some(encoder.to_string());
-            config.model_config.transducer.decoder = Some(decoder.to_string());
-            config.model_config.transducer.joiner = Some(joiner.to_string());
-            config.model_config.tokens = Some(tokens.to_string());
-            config.model_config.num_threads = 4;
-            config.model_config.provider = Some("cpu".into());
-            config.model_config.model_type = Some("nemo_transducer".into());
-
-            match sherpa_onnx::OfflineRecognizer::create(&config) {
+            match create_recognizer(engine) {
                 Some(r) => {
                     let load_ms = load_start.elapsed().as_millis();
                     log::info!("Model loaded in {load_ms}ms");

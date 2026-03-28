@@ -27,27 +27,21 @@
 
   <!-- Tab navigation -->
   <nav class="flex border-b border-gray-800 px-4 pt-1 shrink-0" data-tauri-drag-region>
-    <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-accent text-accent" data-tab="dictation">Dictation</button>
+    <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-accent text-accent" data-tab="history">History</button>
     <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors" data-tab="models">Models</button>
     <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors" data-tab="audio">Audio</button>
     <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors" data-tab="general">General</button>
     <button class="tab-btn px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 transition-colors" data-tab="debug">Debug</button>
   </nav>
 
-  <!-- Dictation tab -->
-  <div id="dictation" class="tab-panel flex-1 overflow-y-auto p-5 flex flex-col">
-    <div id="transcription-output" class="flex-1 min-h-[120px] bg-surface rounded-lg border border-card-border p-4 text-sm text-gray-200 overflow-y-auto mb-5">
-      <p class="text-gray-500 text-center mt-8" id="transcription-placeholder">Tap the button to start recording</p>
+  <!-- History tab -->
+  <div id="history" class="tab-panel flex-1 overflow-y-auto p-5 flex flex-col">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-base font-semibold text-gray-100">Transcription History</h2>
+      <button id="clear-history" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">Clear</button>
     </div>
-    <div class="flex flex-col items-center pb-4">
-      <button id="record-btn" class="record-btn w-16 h-16 rounded-full bg-accent flex items-center justify-center transition-all active:scale-95">
-        <svg id="mic-icon" xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-900">
-          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
-          <line x1="12" x2="12" y1="19" y2="22"/>
-        </svg>
-      </button>
-      <p id="record-status" class="text-xs text-gray-500 mt-2">Ready</p>
+    <div id="history-list" class="flex-1 min-h-0 space-y-3 overflow-y-auto">
+      <p id="history-placeholder" class="text-gray-500 text-center mt-8 text-sm">No transcriptions yet</p>
     </div>
   </div>
 
