@@ -410,7 +410,7 @@ class VerbaAccessibilityService : AccessibilityService() {
             ring.setSolid()
             mainHandler.postDelayed({
                 ring.visibility = View.INVISIBLE
-            }, 2000)
+            }, 1500)
         }
     }
 
