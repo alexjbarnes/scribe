@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
+
+static MODEL_MANAGER: OnceLock<ModelManager> = OnceLock::new();
 
 use futures_util::StreamExt;
 use serde::Serialize;
@@ -50,6 +52,21 @@ pub struct ModelManager {
 }
 
 impl ModelManager {
+    /// Initialize the global singleton. Safe to call multiple times; only the
+    /// first call actually creates the manager.
+    pub fn init_global() -> Result<&'static Self, String> {
+        if let Some(m) = MODEL_MANAGER.get() {
+            return Ok(m);
+        }
+        let mgr = Self::new()?;
+        Ok(MODEL_MANAGER.get_or_init(|| mgr))
+    }
+
+    /// Access the global singleton. Panics if not initialized.
+    pub fn global() -> &'static Self {
+        MODEL_MANAGER.get().expect("ModelManager not initialized")
+    }
+
     pub fn new() -> Result<Self, String> {
         let base_dir = Self::default_base_dir()?;
         std::fs::create_dir_all(&base_dir).map_err(|e| format!("create models dir: {e}"))?;

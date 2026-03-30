@@ -1,6 +1,7 @@
 mod audio;
 mod config;
 mod debug_log;
+mod delivery;
 mod engine;
 mod history;
 mod models;
@@ -18,14 +19,14 @@ mod android_ime;
 
 use tauri::{Emitter, Manager};
 
+#[cfg(desktop)]
 struct AppState {
-    engine: std::sync::Mutex<Option<engine::Engine>>,
     recording: std::sync::atomic::AtomicBool,
 }
 
 #[tauri::command]
-fn list_models(state: tauri::State<'_, models::ModelManager>) -> Vec<models::ModelInfo> {
-    state.list()
+fn list_models() -> Vec<models::ModelInfo> {
+    models::ModelManager::global().list()
 }
 
 #[tauri::command]
@@ -44,20 +45,20 @@ fn save_config(cfg: config::AppConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn list_history(state: tauri::State<'_, history::History>) -> Vec<history::HistoryEntry> {
-    state.list()
+fn list_history() -> Vec<history::HistoryEntry> {
+    history::History::global().list()
 }
 
 #[tauri::command]
-fn clear_history(state: tauri::State<'_, history::History>) {
-    state.clear()
+fn clear_history() {
+    history::History::global().clear()
 }
 
 /// Start a short enrollment recording. Creates a temporary recorder and
 /// speaker verifier, records 5 seconds, extracts and persists the embedding.
 #[tauri::command]
-fn enroll_speaker(app: tauri::AppHandle) -> Result<(), String> {
-    let mgr = app.state::<models::ModelManager>();
+fn enroll_speaker() -> Result<(), String> {
+    let mgr = models::ModelManager::global();
     let speaker_model = mgr.ensure_speaker_model()?;
     let verifier = speaker::SpeakerVerifier::new(&speaker_model)?;
 
@@ -89,31 +90,26 @@ fn enroll_speaker(app: tauri::AppHandle) -> Result<(), String> {
         speaker::save_enrollment(&embedding)?;
     }
 
-    // Update the app engine's in-memory verifier
-    let state = app.state::<AppState>();
-    let guard = state.engine.lock().unwrap();
-    if let Some(ref eng) = *guard {
+    // Update the engine's in-memory verifier
+    engine::with(|eng| {
         if let Some(v) = eng.verifier() {
             if let Some(emb) = speaker::load_enrollment() {
                 v.enroll_from_embedding(emb);
             }
         }
-    }
+    });
 
     log::info!("Speaker enrolled and saved");
     Ok(())
 }
 
 #[tauri::command]
-fn clear_speaker_enrollment(app: tauri::AppHandle) -> Result<(), String> {
-    let state = app.state::<AppState>();
-    let guard = state.engine.lock().unwrap();
-    if let Some(ref eng) = *guard {
+fn clear_speaker_enrollment() -> Result<(), String> {
+    engine::with(|eng| {
         if let Some(verifier) = eng.verifier() {
             verifier.clear_enrollment();
         }
-    }
-    drop(guard);
+    });
     speaker::delete_enrollment()?;
     Ok(())
 }
@@ -124,30 +120,17 @@ fn get_speaker_enrollment_status() -> bool {
 }
 
 #[tauri::command]
-fn switch_model(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, models::ModelManager>,
-    id: String,
-) -> Result<(), String> {
-    state.set_active(&id)?;
+fn switch_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    models::ModelManager::global().set_active(&id)?;
     log::info!("Switched to model: {id}");
 
     let app = app.clone();
     let id = id.clone();
     std::thread::spawn(move || {
-        // Reload the app engine's transcriber
-        let app_state = app.state::<AppState>();
-        let mut guard = app_state.engine.lock().unwrap();
-        if let Some(ref mut eng) = *guard {
+        let mgr = models::ModelManager::global();
+        engine::with_mut(|eng| {
             if eng.model_id() != id {
                 log::info!("Reloading model to {id}");
-                let mgr = match models::ModelManager::new() {
-                    Ok(m) => m,
-                    Err(e) => {
-                        log::error!("Model manager error on reload: {e}");
-                        return;
-                    }
-                };
                 if let Some((_mid, model_engine)) = mgr.first_downloaded_model() {
                     match transcribe::Transcriber::new(model_engine) {
                         Ok(t) => eng.reload_model(t, id.clone()),
@@ -155,13 +138,7 @@ fn switch_model(
                     }
                 }
             }
-        }
-        drop(guard);
-
-        // On Android, also reload the IME overlay's separate engine
-        #[cfg(target_os = "android")]
-        android_ime::reload_overlay_model(&id);
-
+        });
         let _ = app.emit("model-loaded", serde_json::json!({ "id": &id }));
     });
 
@@ -170,33 +147,33 @@ fn switch_model(
 
 #[tauri::command]
 async fn download_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    let mgr = app.state::<models::ModelManager>();
-
+    let mgr = models::ModelManager::global();
     if mgr.is_downloaded(&id) {
         return Ok(());
     }
-
     mgr.download(&id, &app).await
 }
 
 #[tauri::command]
-fn delete_model(state: tauri::State<'_, models::ModelManager>, id: String) -> Result<(), String> {
-    state.delete(&id)
+fn delete_model(id: String) -> Result<(), String> {
+    models::ModelManager::global().delete(&id)
 }
 
 /// Initialize the Engine in the background: VAD, recorder, transcriber,
 /// speaker verifier, then preload model + post-processing pipeline.
+/// Shared by both Tauri app and Android IME -- whichever starts first
+/// creates the engine; the other is a no-op.
 fn init_engine(app: tauri::AppHandle) {
     std::thread::Builder::new()
         .name("engine-init".into())
         .spawn(move || {
-            let mgr = match models::ModelManager::new() {
-                Ok(m) => m,
-                Err(e) => {
-                    log::error!("Engine init: failed to create model manager: {e}");
-                    return;
-                }
-            };
+            if engine::is_initialized() {
+                log::info!("Engine init: already initialized (by IME), skipping");
+                let _ = app.emit("engine-ready", ());
+                return;
+            }
+
+            let mgr = models::ModelManager::global();
 
             let vad = match mgr.ensure_vad_model() {
                 Ok(p) => {
@@ -257,11 +234,9 @@ fn init_engine(app: tauri::AppHandle) {
                 }
             };
 
-            let engine = engine::Engine::new(recorder, transcriber, model_id.clone(), verifier);
-            engine.preload();
-
-            let state = app.state::<AppState>();
-            *state.engine.lock().unwrap() = Some(engine);
+            let eng = engine::Engine::new(recorder, transcriber, model_id.clone(), verifier);
+            eng.preload();
+            engine::init_global(eng);
 
             log::info!("Engine init: ready (model: {model_id})");
             let _ = app.emit("engine-ready", ());
@@ -291,25 +266,19 @@ pub fn run() {
                 }
             }
 
-            let model_manager = match models::ModelManager::new() {
-                Ok(m) => m,
-                Err(e) => {
-                    log::error!("Failed to create model manager: {e}");
-                    return Ok(());
-                }
-            };
+            if let Err(e) = models::ModelManager::init_global() {
+                log::error!("Failed to create model manager: {e}");
+                return Ok(());
+            }
+            history::History::init_global();
 
             debug_log::set_app_handle(app.handle().clone());
 
-            app.manage(model_manager);
-            app.manage(history::History::new());
-            app.manage(AppState {
-                engine: std::sync::Mutex::new(None),
-                recording: std::sync::atomic::AtomicBool::new(false),
-            });
-
             #[cfg(desktop)]
             {
+                app.manage(AppState {
+                    recording: std::sync::atomic::AtomicBool::new(false),
+                });
                 use std::sync::atomic::Ordering;
                 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
                 use tauri::tray::TrayIconBuilder;
@@ -318,7 +287,7 @@ pub fn run() {
                 // Alt+D: press to start recording, release to stop and paste
                 let shortcut = Shortcut::new(Some(Modifiers::ALT), Code::KeyD);
                 let app_handle = app.handle().clone();
-                let paste_target: std::sync::Mutex<Option<paste::PasteTarget>> = std::sync::Mutex::new(None);
+                let captured_target: std::sync::Mutex<Option<paste::PasteTarget>> = std::sync::Mutex::new(None);
                 app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
                     let state = app_handle.state::<AppState>();
                     match event.state {
@@ -326,24 +295,22 @@ pub fn run() {
                             if state.recording.load(Ordering::SeqCst) {
                                 return;
                             }
-                            // Capture which app has focus NOW so we can paste back to it later
-                            *paste_target.lock().unwrap() = paste::capture_frontmost_app();
-                            let guard = state.engine.lock().unwrap();
-                            let Some(ref engine) = *guard else {
-                                log::warn!("Shortcut: engine not ready");
-                                let _ = app_handle.emit("dictation-error", "Engine not ready. Wait for model to load.");
-                                return;
-                            };
-                            match engine.start_streaming() {
-                                Ok(()) => {
+                            *captured_target.lock().unwrap() = paste::capture_frontmost_app();
+                            let started = engine::with(|eng| eng.start_streaming());
+                            match started {
+                                Some(Ok(())) => {
                                     state.recording.store(true, Ordering::SeqCst);
                                     sound::play_start();
                                     let _ = app_handle.emit("dictation-state", "recording");
                                     log::info!("Shortcut: recording started");
                                 }
-                                Err(e) => {
+                                Some(Err(e)) => {
                                     log::error!("Shortcut: failed to start: {e}");
                                     let _ = app_handle.emit("dictation-error", e.as_str());
+                                }
+                                None => {
+                                    log::warn!("Shortcut: engine not ready");
+                                    let _ = app_handle.emit("dictation-error", "Engine not ready. Wait for model to load.");
                                 }
                             }
                         }
@@ -355,19 +322,17 @@ pub fn run() {
                             let _ = app_handle.emit("dictation-state", "processing");
                             log::info!("Shortcut: stopping recording");
 
-                            let paste_target = paste_target.lock().unwrap().take();
+                            let target = captured_target.lock().unwrap().take();
+                            let deliver = delivery::DesktopDelivery { target };
 
-                            let pending = {
-                                let guard = state.engine.lock().unwrap();
-                                let Some(ref engine) = *guard else { return };
-                                match engine.stop_recording() {
-                                    Ok(p) => p,
-                                    Err(e) => {
-                                        log::error!("Shortcut: stop failed: {e}");
-                                        let _ = app_handle.emit("dictation-state", "idle");
-                                        return;
-                                    }
+                            let pending = match engine::with(|eng| eng.stop_recording()) {
+                                Some(Ok(p)) => p,
+                                Some(Err(e)) => {
+                                    log::error!("Shortcut: stop failed: {e}");
+                                    let _ = app_handle.emit("dictation-state", "idle");
+                                    return;
                                 }
+                                None => return,
                             };
 
                             let app_for_paste = app_handle.clone();
@@ -385,14 +350,16 @@ pub fn run() {
                                                     "audio_duration_ms": result.audio_duration_ms,
                                                     "transcribe_ms": result.transcribe_ms,
                                                 }));
-                                            match paste::paste(&result.text, paste_target.as_ref()) {
-                                                Ok(paste::PasteResult::Pasted) => {}
-                                                Ok(paste::PasteResult::ClipboardOnly) => {
+                                            use delivery::TextDelivery;
+                                            match deliver.deliver(&result.text) {
+                                                Ok(delivery::DeliveryResult::Inserted) => {}
+                                                Ok(delivery::DeliveryResult::ClipboardOnly) => {
                                                     sound::play_error();
-                                                    let _ = app_for_paste.emit("paste-fallback", "Text copied to clipboard — paste manually with Cmd+V");
+                                                    let _ = app_for_paste.emit("paste-fallback",
+                                                        "Text copied to clipboard — paste manually");
                                                 }
                                                 Err(e) => {
-                                                    log::error!("Shortcut: paste failed: {e}");
+                                                    log::error!("Shortcut: delivery failed: {e}");
                                                     sound::play_error();
                                                 }
                                             }

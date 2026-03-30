@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+fn default_true() -> bool { true }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub language: String,
@@ -9,6 +11,8 @@ pub struct AppConfig {
     pub device_index: i32,
     pub active_engine: String,
     pub active_model_id: String,
+    #[serde(default = "default_true")]
+    pub haptic_feedback: bool,
 }
 
 impl Default for AppConfig {
@@ -22,6 +26,7 @@ impl Default for AppConfig {
             device_index: -1,
             active_engine: "whisper".into(),
             active_model_id: String::new(),
+            haptic_feedback: true,
         }
     }
 }
@@ -87,6 +92,7 @@ mod tests {
             device_index: 2,
             active_engine: "parakeet".into(),
             active_model_id: "parakeet-v3-int8".into(),
+            haptic_feedback: false,
         };
 
         let serialized = toml::to_string_pretty(&cfg).unwrap();
@@ -97,6 +103,7 @@ mod tests {
         assert_eq!(deserialized.device_index, 2);
         assert_eq!(deserialized.active_engine, "parakeet");
         assert_eq!(deserialized.active_model_id, "parakeet-v3-int8");
+        assert!(!deserialized.haptic_feedback);
     }
 
     #[test]
@@ -120,6 +127,7 @@ output_dir = "/tmp"
 device_index = -1
 active_engine = "whisper"
 active_model_id = ""
+haptic_feedback = true
 "#;
         let cfg: AppConfig = toml::from_str(full).unwrap();
         assert_eq!(cfg.language, "en");

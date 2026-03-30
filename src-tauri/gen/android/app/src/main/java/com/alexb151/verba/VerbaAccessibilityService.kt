@@ -229,7 +229,7 @@ class VerbaAccessibilityService : AccessibilityService() {
 
         // Recording ring (hidden by default, sits behind button)
         val ring = RoundedRingView(this).apply {
-            visibility = View.GONE
+            visibility = View.INVISIBLE
         }
         val ringLp = FrameLayout.LayoutParams(ringSize, ringSize).apply {
             gravity = Gravity.CENTER
@@ -383,9 +383,10 @@ class VerbaAccessibilityService : AccessibilityService() {
 
     private fun startRecordingRing() {
         ringView?.let { ring ->
+            ring.setColor(0xFFFF4444.toInt())
             ring.visibility = View.VISIBLE
             ringAnimator?.cancel()
-            ringAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            ringAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
                 duration = 1500
                 repeatCount = ValueAnimator.INFINITE
                 interpolator = android.view.animation.LinearInterpolator()
@@ -395,15 +396,34 @@ class VerbaAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun stopRecordingRing() {
+    private fun showProcessingRing() {
+        ringView?.let { ring ->
+            ring.setColor(0xFF4488FF.toInt())
+        }
+    }
+
+    private fun flashCompleteRing() {
         ringAnimator?.cancel()
         ringAnimator = null
-        ringView?.visibility = View.GONE
+        ringView?.let { ring ->
+            ring.setColor(0xFF44BB44.toInt())
+            ring.setSolid()
+            mainHandler.postDelayed({
+                ring.visibility = View.INVISIBLE
+            }, 2000)
+        }
+    }
+
+    private fun hideRing() {
+        ringAnimator?.cancel()
+        ringAnimator = null
+        ringView?.visibility = View.INVISIBLE
     }
 
     private fun startRecording() {
         logI("startRecording")
         recording = true
+        hapticFeedback(heavy = false)
         startRecordingRing()
 
         executor.execute {
@@ -412,7 +432,7 @@ class VerbaAccessibilityService : AccessibilityService() {
             if (!started) {
                 mainHandler.post {
                     recording = false
-                    stopRecordingRing()
+                    hideRing()
                     toast("Verba: failed to start recording")
                 }
             }
@@ -422,19 +442,20 @@ class VerbaAccessibilityService : AccessibilityService() {
     private fun stopAndTranscribe() {
         logI("stopAndTranscribe")
         recording = false
-        stopRecordingRing()
-        micButton?.alpha = 0.5f
+        hapticFeedback(heavy = true)
+        showProcessingRing()
 
         executor.execute {
             val text = nativeStopAndTranscribe()
             logI("nativeStopAndTranscribe returned ${text?.length ?: 0} chars")
             mainHandler.post {
-                micButton?.alpha = 1.0f
                 if (!text.isNullOrEmpty()) {
                     logI("injecting text: \"${text.take(80)}\"")
+                    flashCompleteRing()
                     injectText(text)
                 } else {
                     logW("no text returned from transcription")
+                    hideRing()
                     toast("Verba: no speech detected")
                 }
             }
@@ -600,15 +621,52 @@ class VerbaAccessibilityService : AccessibilityService() {
         }
     }
 
+    private fun isHapticEnabled(): Boolean {
+        // Check both possible config locations (Tauri app_data_dir and IME dataDir)
+        val candidates = listOf(
+            java.io.File(applicationContext.dataDir, "app_data/config.toml"),
+            java.io.File(applicationContext.dataDir, "config.toml")
+        )
+        val configFile = candidates.firstOrNull { it.exists() } ?: return true
+        return try {
+            !configFile.readText().contains("haptic_feedback = false")
+        } catch (_: Exception) { true }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun hapticFeedback(heavy: Boolean = false) {
+        if (!isHapticEnabled()) return
+        try {
+            val vibrator = getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
+            if (vibrator == null || !vibrator.hasVibrator()) {
+                logW("haptic: no vibrator")
+                return
+            }
+
+            val ms = if (heavy) 150L else 80L
+            val effect = android.os.VibrationEffect.createOneShot(
+                ms, android.os.VibrationEffect.DEFAULT_AMPLITUDE
+            )
+            val attrs = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+            vibrator.vibrate(effect, attrs)
+            logD("haptic: fired ${ms}ms with audio attrs")
+        } catch (e: Exception) {
+            logW("haptic failed: $e")
+        }
+    }
+
     private fun toast(msg: String) {
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
     }
 
     private inner class RoundedRingView(context: android.content.Context) : View(context) {
         private val dp = resources.displayMetrics.density
         private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 3f * dp
+            strokeWidth = 5f * dp
             color = 0xFFFF4444.toInt()
             strokeCap = android.graphics.Paint.Cap.ROUND
         }
@@ -618,7 +676,7 @@ class VerbaAccessibilityService : AccessibilityService() {
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             val inset = paint.strokeWidth / 2f
-            val cr = 15f * dp
+            val cr = 13f * dp
             path.reset()
             path.addRoundRect(
                 inset, inset, w - inset, h - inset,
@@ -628,6 +686,11 @@ class VerbaAccessibilityService : AccessibilityService() {
             totalLength = measure.length
         }
 
+        fun setColor(color: Int) {
+            paint.color = color
+            invalidate()
+        }
+
         fun setPhase(phase: Float) {
             if (totalLength <= 0f) return
             val dash = totalLength * 0.75f
@@ -635,6 +698,11 @@ class VerbaAccessibilityService : AccessibilityService() {
             paint.pathEffect = android.graphics.DashPathEffect(
                 floatArrayOf(dash, gap), phase * totalLength
             )
+            invalidate()
+        }
+
+        fun setSolid() {
+            paint.pathEffect = null
             invalidate()
         }
 

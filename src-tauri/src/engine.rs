@@ -3,8 +3,12 @@
 //! Owns a recorder and transcriber, handles VAD streaming, background
 //! segment transcription, chunk joining, post-processing, and history.
 //! Platform-specific code (JNI, Tauri commands) wraps this.
+//!
+//! The engine is a process-wide singleton. Both the Tauri app and the
+//! Android IME accessibility service share the same instance, so the
+//! ONNX model is only loaded once.
 
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread::JoinHandle;
 
 use crate::history::{ChunkTiming, History};
@@ -12,6 +16,53 @@ use crate::postprocess;
 use crate::recorder::AudioRecorder;
 use crate::speaker::SpeakerVerifier;
 use crate::transcribe::Transcriber;
+
+static ENGINE: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
+
+fn engine_cell() -> &'static Mutex<Option<Engine>> {
+    ENGINE.get_or_init(|| Mutex::new(None))
+}
+
+/// Initialize the global engine singleton. Safe to call from multiple
+/// entry points (Tauri setup, JNI nativeInit) -- whichever runs first
+/// creates the engine; subsequent calls are no-ops.
+pub fn init_global(engine: Engine) {
+    let cell = engine_cell();
+    let mut guard = cell.lock().unwrap();
+    if guard.is_some() {
+        log::info!("Engine: already initialized, skipping");
+        return;
+    }
+    *guard = Some(engine);
+    log::info!("Engine: global singleton initialized");
+}
+
+/// Returns true if the engine singleton has been initialized.
+pub fn is_initialized() -> bool {
+    let cell = engine_cell();
+    cell.lock().unwrap().is_some()
+}
+
+/// Run a closure with a shared reference to the engine.
+pub fn with<R>(f: impl FnOnce(&Engine) -> R) -> Option<R> {
+    let cell = engine_cell();
+    let guard = cell.lock().unwrap();
+    guard.as_ref().map(f)
+}
+
+/// Run a closure with a mutable reference to the engine.
+pub fn with_mut<R>(f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
+    let cell = engine_cell();
+    let mut guard = cell.lock().unwrap();
+    guard.as_mut().map(f)
+}
+
+/// Destroy the engine, freeing all resources.
+pub fn destroy() {
+    let cell = engine_cell();
+    *cell.lock().unwrap() = None;
+    log::info!("Engine: global singleton destroyed");
+}
 
 pub struct ChunkResult {
     pub text: String,
@@ -113,8 +164,7 @@ impl PendingTranscription {
             all_chunks.len(), self.audio_duration_ms, total_transcribe_ms, postprocess_ms, filtered_segments,
             if full_text.len() > 60 { &full_text[..60] } else { &full_text });
 
-        let history = History::new();
-        history.add(
+        History::global().add(
             full_text.clone(),
             self.model_id.clone(),
             total_transcribe_ms,

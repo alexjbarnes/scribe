@@ -1,5 +1,7 @@
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
+
+static HISTORY: OnceLock<History> = OnceLock::new();
 
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +39,14 @@ pub struct History {
 }
 
 impl History {
+    pub fn init_global() -> &'static Self {
+        HISTORY.get_or_init(Self::new)
+    }
+
+    pub fn global() -> &'static Self {
+        HISTORY.get().expect("History not initialized")
+    }
+
     pub fn new() -> Self {
         let entries = Self::load_from_disk().unwrap_or_default();
         Self {
@@ -76,8 +86,7 @@ impl History {
     }
 
     pub fn list(&self) -> Vec<HistoryEntry> {
-        // Reload from disk to pick up entries written by the IME path
-        // (which uses a separate History instance).
+        // Reload from disk in case of external edits.
         if let Some(entries) = Self::load_from_disk() {
             *self.entries.lock().unwrap() = entries;
         }

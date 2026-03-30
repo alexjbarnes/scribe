@@ -158,6 +158,17 @@
           </div>
           <input id="cfg-threads" type="number" value="4" min="1" max="32" class="w-24 bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-1.5 text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors text-right" />
         </div>
+        <div class="border-t border-outline-variant/20"></div>
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="text-sm font-medium text-on-surface">Haptic Feedback</label>
+            <p class="text-xs text-on-surface-variant mt-0.5">Vibrate on recording start and stop</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input id="cfg-haptic" type="checkbox" checked class="sr-only peer" />
+            <div class="w-9 h-5 bg-outline-variant/40 rounded-full peer peer-checked:bg-primary transition-colors after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"></div>
+          </label>
+        </div>
       </div>
     </section>
 

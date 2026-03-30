@@ -413,6 +413,7 @@ async function loadConfig() {
   document.getElementById('cfg-language').value = cfg.language;
   document.getElementById('cfg-threads').value = cfg.threads;
   document.getElementById('cfg-output-dir').value = cfg.output_dir;
+  document.getElementById('cfg-haptic').checked = cfg.haptic_feedback;
   // Restore audio device selection
   document.getElementById('audio-device').value = cfg.device_index;
 }
@@ -425,6 +426,7 @@ async function saveConfig() {
     device_index: parseInt(document.getElementById('audio-device').value, 10),
     active_engine: 'whisper',
     active_model_id: '',
+    haptic_feedback: document.getElementById('cfg-haptic').checked,
   };
   try {
     await invoke('save_config', { cfg });
