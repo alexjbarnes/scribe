@@ -3,10 +3,12 @@
 //! 1. Filler word removal (rule-based, ~1ms)
 //! 2. Inverse text normalization (rule-based, ~5ms)
 //! 3. Harper polish (Rust grammar rules, ~5-10ms)
+//! 4. SymSpell spell correction (edit-distance, <1ms)
 
 mod filler;
 mod harper;
 mod itn;
+mod spelling;
 
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -35,6 +37,7 @@ pub struct PipelineResult {
 
 struct Pipeline {
     harper: harper::HarperLinter,
+    spelling: spelling::SpellCorrector,
 }
 
 static PIPELINE: OnceLock<Pipeline> = OnceLock::new();
@@ -42,6 +45,7 @@ static PIPELINE: OnceLock<Pipeline> = OnceLock::new();
 fn get_pipeline() -> &'static Pipeline {
     PIPELINE.get_or_init(|| Pipeline {
         harper: harper::HarperLinter::new(),
+        spelling: spelling::SpellCorrector::new(),
     })
 }
 
@@ -113,6 +117,20 @@ pub fn postprocess(text: &str) -> PipelineResult {
     log::debug!("Pipeline stage 3 (Harper): {ms}ms changed={changed}");
     stages.push(PipelineStage {
         name: "Harper".to_string(),
+        text: s.clone(),
+        changed,
+        duration_ms: ms,
+    });
+
+    // Stage 4: Spell correction
+    let t = Instant::now();
+    let prev = s.clone();
+    s = pipeline.spelling.correct(&s);
+    let changed = s != prev;
+    let ms = t.elapsed().as_millis() as u64;
+    log::debug!("Pipeline stage 4 (Spelling): {ms}ms changed={changed}");
+    stages.push(PipelineStage {
+        name: "Spelling".to_string(),
         text: s.clone(),
         changed,
         duration_ms: ms,

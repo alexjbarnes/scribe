@@ -14,7 +14,7 @@
         "title": "Verba",
         "width": 620,
         "height": 560,
-        "visible": true,
+        "visible": false,
         "center": true,
         "resizable": true
       }

@@ -315,6 +315,22 @@ pub fn run() {
                 use tauri::tray::TrayIconBuilder;
                 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+                // Hide from dock and Cmd+Tab — menu bar only app
+                #[cfg(target_os = "macos")]
+                {
+                    extern "C" {
+                        fn objc_getClass(name: *const u8) -> *mut std::ffi::c_void;
+                        fn sel_registerName(name: *const u8) -> *mut std::ffi::c_void;
+                        fn objc_msgSend(receiver: *mut std::ffi::c_void, sel: *mut std::ffi::c_void, ...) -> *mut std::ffi::c_void;
+                    }
+                    unsafe {
+                        let cls = objc_getClass(b"NSApplication\0".as_ptr());
+                        let ns_app = objc_msgSend(cls, sel_registerName(b"sharedApplication\0".as_ptr()));
+                        // NSApplicationActivationPolicyAccessory = 1
+                        objc_msgSend(ns_app, sel_registerName(b"setActivationPolicy:\0".as_ptr()), 1i64);
+                    }
+                }
+
                 // Alt+D: press to start recording, release to stop and paste
                 let shortcut = Shortcut::new(Some(Modifiers::ALT), Code::KeyD);
                 let app_handle = app.handle().clone();

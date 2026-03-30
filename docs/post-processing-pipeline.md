@@ -2,7 +2,7 @@
 
 The post-processing pipeline runs on the full joined transcript (all VAD chunks concatenated) after transcription completes. It lives in `src-tauri/src/postprocess/`.
 
-Pipeline order: Raw transcription -> Filler removal -> ITN -> Harper -> Cleanup
+Pipeline order: Raw transcription -> Filler removal -> ITN -> Harper -> Spelling -> Cleanup
 
 Each stage receives the output of the previous stage. All stages are recorded for debugging (visible under "Details" in the history UI).
 
@@ -99,7 +99,30 @@ Harper finds lints (grammar/spelling issues) and applies the first suggestion fo
 - **Custom dictionary**: Replace `FstDictionary::curated()` with a custom dictionary to add domain-specific words that Harper might flag as misspellings.
 - **Suggestion strategy**: Currently always applies `suggestions[0]` (first suggestion). You could filter by lint severity or skip certain lint categories.
 
-## Stage 4: Final Cleanup (`mod.rs`)
+## Stage 4: SymSpell Spell Correction (`spelling.rs`)
+
+Uses the `symspell` crate (edit-distance-based correction) with English frequency dictionaries. Catches ASR transcription misspellings that Harper's dictionary misses. Sub-millisecond per sentence.
+
+Dictionaries are embedded at compile time via `include_str!`:
+- **Unigram**: 82,765 English words with frequency counts (~1.8MB)
+- **Bigram**: 243,342 word pairs with frequency counts (~4.4MB)
+
+Uses `lookup_compound()` for sentence-level correction (handles split/joined words) and falls back to per-word `lookup()` when the sentence contains protected words.
+
+### Protected words
+
+The spell corrector preserves words that should not be corrected:
+- **All-uppercase** (2+ chars): acronyms like API, DNS, POC
+- **Contains digits**: numbers, version strings (v2, 3rd)
+- **Starts uppercase mid-sentence**: likely proper nouns (heuristic)
+
+### What you can tweak
+
+- **Edit distance**: `max_dictionary_edit_distance(2)` in `SpellCorrector::new()`. Lower to 1 for fewer false corrections (but misses more errors). Higher than 2 is not recommended (exponential candidate explosion).
+- **Custom dictionary terms**: Add domain-specific words to the unigram dictionary file (`data/frequency_dictionary_en_82_765.txt`) with a high frequency count to prevent them being "corrected" away.
+- **Protection rules**: Edit `should_protect()` in `spelling.rs` to adjust which words are exempt from correction.
+
+## Stage 5: Final Cleanup (`mod.rs`)
 
 Deterministic text normalization applied last.
 
@@ -116,7 +139,7 @@ Deterministic text normalization applied last.
 
 ## Pipeline-level configuration
 
-- **Stage ordering**: Defined in `postprocess()` in `mod.rs`. Changing the order matters. Filler removal before ITN prevents "um twenty three" from partially normalizing. Harper after ITN means grammar rules see "$23" not "twenty three dollars".
+- **Stage ordering**: Defined in `postprocess()` in `mod.rs`. Changing the order matters. Filler removal before ITN prevents "um twenty three" from partially normalizing. Harper after ITN means grammar rules see "$23" not "twenty three dollars". Spelling after Harper means it only sees text that Harper has already cleaned up, avoiding duplicate corrections.
 - **Skipping stages**: No runtime toggle exists. To skip a stage, comment it out in `postprocess()` or add a config check. Each stage is independent -- removing one won't break others.
 - **Adding stages**: Add a new module, call it from `postprocess()` between existing stages, and push a `PipelineStage` with the result. The UI will show it automatically.
 
@@ -126,6 +149,7 @@ Typical latency for the full pipeline on a sentence:
 - Filler removal: ~1ms
 - ITN: ~5ms
 - Harper: ~5-10ms
+- Spelling: <1ms
 - Cleanup: <1ms
 
 Total: ~10-15ms. All stages run synchronously on the calling thread. Per-stage and total timings are recorded in history entries.
