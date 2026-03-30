@@ -1,138 +1,168 @@
 # Grammar Correction Roadmap
 
-Current post-processing uses Harper's ~200 curated rules (see [post-processing-pipeline.md](post-processing-pipeline.md) for details). This document covers the plan for improving grammar correction beyond what Harper provides out of the box.
+## Current state
 
-## Problem
+Post-processing uses Harper (~300 curated Rust rules) and SymSpell for spell correction. Harper catches basic grammar and punctuation issues but misses common transcription errors:
 
-Harper catches spelling, punctuation, and simple grammar issues but misses common transcription errors:
-- Mid-sentence capitalization from ASR ("why Does this happen" — "Does" should be "does")
-- ASR-specific misspellings not in Harper's dictionary
-- Context-dependent errors (verb tense, homophones) that require more than pattern matching
+- a/an agreement ("a error" should be "an error")
+- Word transpositions ("tot he" should be "to the")
+- Subject-verb disagreement ("he walk" should be "he walks")
+- Mid-sentence capitalization from ASR chunk boundaries
+- Context-dependent errors (verb tense, homophones)
 
-## Planned Architecture
+LanguageTool covers all of these with ~3000 English rules, but requires Java.
 
-| Layer | Tool | Latency | Updateable | Status |
-|-------|------|---------|------------|--------|
-| 1. Rules | Harper curated + base Weirpack + user Weirpack | ~5-10ms | Yes (ZIP files via CDN) | Harper curated in use; Weirpacks not yet implemented |
-| 2. Capitalization | Custom `Linter` trait impl (mid-sentence caps fix) | <1ms | Compiled | Not yet implemented |
-| 3. Spell | SymSpell (`fast_symspell` crate) | <1ms | Dictionary file | Not yet implemented |
-| 4. ML GEC (optional) | GECToR INT8 ONNX via `ort` | 40-80ms CPU | Model file | Evaluated, not integrated |
+## Plan: Replace Harper with nlprule
 
-Layers 1-3 are immediate priorities. Layer 4 is optional/toggleable and longer-term.
+nlprule is a Rust port of LanguageTool's rule engine. It compiles LanguageTool's XML rule definitions into binary data at build time and interprets them at runtime. Pure Rust, no JVM, runs in-process at 1.7-2.8x the speed of LanguageTool.
 
-## Layer 1: Harper Weir DSL + Weirpacks
+The upstream repo (github.com/bminixhofer/nlprule) is unmaintained since 2021. We are forking it and fixing the unimplemented features that prevent ~600 rules from compiling.
 
-### What Weir is
+### Fork work phases
 
-Harper supports custom grammar rules via the **Weir DSL**, a pattern-matching language for word sequences. Rules are packaged as **Weirpacks** — ZIP archives of `.weir` files that load at runtime.
+**Phase 1: Structural parsing fixes (unlocks ~230 rules)**
 
-### Weir syntax
+Low-risk serde changes. Add missing optional fields to rule/rulegroup structs so the XML deserializer doesn't reject rules that use them.
 
-```weir
-expr main (gong to)
-let becomes "going to"
-let message "Did you mean `going to`?"
-let kind "Typo"
-test "I am gong to go." "I am going to go."
-```
+- Add `tags` field to rule and rulegroup structs (parse and ignore) -- 21 rules
+- Add `type` field to rule and rulegroup structs -- 15 rules
+- Handle `example` elements with `type` attribute -- 43 rules
+- Support detection-only rules (no suggestion, just flag the error) -- 35 rules
+- Fix 3 regex syntax differences between Java and Rust regex engines
+- Handle `raw_pos`, missing `$value`, and other minor structural gaps
 
-Rules match word patterns and suggest replacements. Each rule includes a test case.
+**Phase 2: Match postag in suggestions (unlocks ~242 rules)**
 
-### Runtime loading
+The highest-value single change. LanguageTool suggestions can reference POS tags to inflect words correctly. For example, if "he walk" matches and the suggestion says `postag="VBZ"`, the engine looks up the VBZ form of "walk" and produces "walks".
 
-Weirpacks load from disk via `Weirpack::from_bytes()` — they are not compiled into the binary. This enables:
+- Look up alternative word forms from the tagger dictionary
+- Filter by POS tag or POS tag regex
+- Handle `postag_replace` (regex replacement on POS tag strings)
+- Handle `text` attribute in match elements
 
-- **Base ruleset**: Ship a default Weirpack with ASR-specific corrections (homophones, common mistranscriptions). Push updates via CDN/manifest without app updates.
-- **User-defined rules**: Users create their own `.weir` files in-app for domain-specific corrections.
-- **Merging**: `LintGroup::merge_from()` supports layering multiple packs. Name collisions resolve by last-pack-wins (intentional override). This means we can ship a base pack and let users append their own on top.
+This unlocks a/an agreement, subject-verb agreement, and many other rules that need morphological awareness.
 
-### Limitations
+**Phase 3: Filters (unlocks ~31 rules)**
 
-Weir matches **word patterns**, not arbitrary text transformations. Mid-sentence capitalization ("why Does") cannot be fixed with a Weir rule because it requires checking casing rather than matching specific words. This needs a custom `Linter` trait implementation (Layer 2).
+LanguageTool filters are Java callbacks for custom logic (date validation, number checking, etc.). Reimplement the most common ones in Rust. Start with the filters that cover the most rules.
 
-### Delivery model
+**Phase 4: Update rule data**
 
-```
-CDN manifest.json
-├── version: "1.2.0"
-├── base_weirpack_url: "https://cdn.example.com/rules/base-v1.2.0.weirpack"
-└── checksum: "sha256:..."
-
-App startup:
-1. Check manifest version against local cache
-2. Download new base Weirpack if version changed
-3. Load base Weirpack + user Weirpack from disk
-4. Merge into LintGroup
-```
-
-## Layer 2: Custom Capitalization Linter
-
-A Rust implementation of Harper's `Linter` trait specifically for fixing mid-sentence capitalization from ASR output. Harper's curated rules don't cover this because it's not a standard grammar error — it's an ASR artifact where the model capitalises words at chunk boundaries.
-
-The linter would:
-1. Tokenize the sentence
-2. For each word that isn't the first word, a proper noun, or an acronym: check if it's capitalised
-3. If capitalised and not in a proper-noun dictionary: suggest lowercasing
-
-This is compiled into the binary (not a Weirpack rule) because it requires programmatic logic beyond pattern matching.
-
-## Layer 3: SymSpell Spell Correction
-
-The `fast_symspell` Rust crate provides edit-distance-1/2 correction in microseconds using a frequency dictionary.
-
-- **Size**: ~5MB dictionary file
-- **Latency**: sub-millisecond
-- **Value**: Catches ASR transcription typos that Harper's limited dictionary misses
-- **Limitation**: No contextual awareness ("there" vs "their" requires context, not edit distance)
-
-Would be a new pipeline stage in `src-tauri/src/postprocess/`, inserted between Harper and final cleanup.
-
-The dictionary file can be customised with domain-specific terms and updated independently of the binary.
-
-## Layer 4: ML Grammar Correction (GECToR)
-
-See the detailed evaluation in [post-processing-pipeline.md](post-processing-pipeline.md#future-neural-grammar-correction-gector) and [post-processing-pipeline.md](post-processing-pipeline.md#future-broader-grammarcorrection-options).
-
-Summary: GECToR (tag-based, single forward pass) fixes real errors Harper cannot — verb tense with temporal markers, subject-verb agreement, run-on sentences. Trade-offs are size (~120MB INT8 for RoBERTa-base) and latency (~40-80ms ONNX INT8). Would be an optional/toggleable pipeline stage.
-
-### Alternative: nlprule
-
-Rust port of LanguageTool's rule engine (~85% of English grammar rules). Unmaintained since April 2021 (v0.6.4). 94 transitive crate dependencies. Has a `fancy-regex` feature flag to avoid the C dependency on Oniguruma (`onig_sys`).
-
-- 1.7-2.8x faster than LanguageTool JVM
-- Would give LanguageTool-level coverage without JVM dependency
-- Rules loaded from binary data files at runtime, not compiled in
+- Build tokenizer and rules from latest LanguageTool XML data (currently based on v5.2)
+- Investigate OpenNLP model format changes for the tokenizer model
+- Update the binary data generation pipeline
 
 ### Size
 
-| Component | Compressed (gzip) | On disk |
-|-----------|-------------------|---------|
-| `en_rules.bin` | 0.96 MB | 7.2 MB |
-| `en_tokenizer.bin` | 6.8 MB | 11.1 MB |
-| **Data files total** | **7.8 MB** | **18.3 MB** |
-| Compiled crate (stripped, LTO) | — | 1.2 MB |
-| **Grand total** | — | **~19.5 MB** |
+| Component | Compressed | On disk |
+|-----------|-----------|---------|
+| en_rules.bin | 0.96 MB | 7.2 MB |
+| en_tokenizer.bin | 6.8 MB | 11.1 MB |
+| Data files total | 7.8 MB | 18.3 MB |
+| Compiled crate (stripped, LTO) | -- | 1.2 MB |
+| Grand total | -- | ~19.5 MB |
 
-Data files are derived from LanguageTool v5.2 and licensed LGPL v2.1 (the crate itself is MIT/Apache-2.0). The `nlprule-build` companion crate can auto-download the compressed `.bin.gz` files at build time from GitHub releases.
+Data files are derived from LanguageTool and licensed LGPL v2.1. The crate itself is MIT/Apache-2.0.
 
-### Delivery model
+### Delivery
 
-The data files compress well enough that they don't need to ship in the binary. A reasonable approach:
+Embed the rule data in the app binary (compile-time inclusion). 7.8 MB compressed is acceptable given we already ship 80MB+ of ONNX models. No runtime downloads for grammar rules.
 
-1. Ship the app without nlprule data files (no size impact on initial download)
-2. On first launch (or when user enables "advanced grammar"), download the compressed files (~7.8 MB)
-3. Decompress to app data directory (~18.3 MB on disk)
-4. Check for updates against a manifest (same mechanism as Weirpack updates)
+## User-defined custom rules
 
-This keeps the APK/DMG lean and makes nlprule an opt-in enhancement.
+Users need a way to add domain-specific corrections from the app UI without touching XML or recompiling anything.
 
-### Risk
+### Approach: Simple JSON rules loaded at runtime
 
-Stale codebase with no upstream maintenance — last release April 2021, last push May 2023. Would need to fork and own maintenance. 94 crate dependencies is a large surface area. Could be worth it for the breadth of rules if Harper + Weirpacks prove insufficient.
+A lightweight format for word/phrase substitutions that covers 90% of user needs:
 
-## Priority and Sequencing
+```json
+[
+  {
+    "id": "gonna_going_to",
+    "match": "gonna",
+    "replace": "going to",
+    "message": "Did you mean going to?"
+  },
+  {
+    "id": "kubernetes_k8s",
+    "match": "kubernetes",
+    "replace": "Kubernetes",
+    "message": "Capitalize Kubernetes"
+  },
+  {
+    "id": "wanna_want_to",
+    "match": "wanna",
+    "replace": "want to"
+  }
+]
+```
 
-1. **Weirpack infrastructure** — Build the loading/merging/caching pipeline. Ship a base Weirpack with common ASR corrections. This is the highest-value work because it makes grammar correction extensible without app updates.
-2. **Custom capitalization linter** — Implement the `Linter` trait for mid-sentence caps. Quick win for one of the most visible ASR artifacts.
-3. **SymSpell integration** — Add as a pipeline stage. Low effort, immediate value for misspellings.
-4. **GECToR / nlprule** — Evaluate when layers 1-3 are in production and we have data on what errors remain. Check for smaller GECToR variants (DistilBERT, MobileBERT) or a maintained nlprule fork before committing.
+Fields:
+- `id` -- unique identifier, auto-generated if not provided
+- `match` -- word or phrase to match (case-insensitive by default)
+- `replace` -- replacement text
+- `message` -- optional explanation shown in history pipeline details
+- `case_sensitive` -- optional, defaults to false
+- `enabled` -- optional, defaults to true
+
+### How it works
+
+1. User opens Settings > Custom Rules in the app
+2. Adds a trigger phrase and replacement
+3. Rule saved to `custom_rules.json` in the app data directory
+4. On next transcription, the custom rules run as a pipeline stage after nlprule and before final cleanup
+5. Rules are loaded once at startup and reloaded when the file changes
+
+### Implementation
+
+Custom rules translate directly into nlprule's internal `Rule` structs at load time. No XML compilation needed. The matching is simple string/phrase matching against tokenized text, which nlprule's pattern engine already supports.
+
+The pipeline stage order becomes:
+
+1. Filler removal (rule-based)
+2. Inverse text normalization (numbers, dates, ordinals)
+3. nlprule grammar correction (~3000 LanguageTool rules)
+4. User custom rules (JSON phrase substitutions)
+5. Spell correction (SymSpell)
+6. Final cleanup (capitalize, trailing punctuation)
+
+User rules run after nlprule so they can override or supplement LanguageTool corrections. Spell correction runs last so it doesn't "correct" intentional user replacements.
+
+### UI
+
+The custom rules UI is a simple list with add/edit/delete:
+
+- Text field for trigger phrase
+- Text field for replacement
+- Toggle to enable/disable each rule
+- Rules display in a scrollable list
+- Import/export as JSON for sharing between devices
+
+Same UI on all platforms (part of the Settings tab in the Tauri WebView).
+
+### What this does not cover
+
+User rules handle word/phrase substitutions only. They do not support:
+- POS-tag-aware matching (use nlprule's XML rules for that)
+- Regex patterns (keep it simple for non-technical users)
+- Context-dependent corrections (homophones, verb tense)
+
+These require the full nlprule engine. If a user needs something more advanced, they can contribute an XML rule to the base ruleset.
+
+## Migration plan
+
+1. Fork nlprule, complete Phase 1 and Phase 2
+2. Add nlprule as a pipeline stage alongside Harper (both running, compare output)
+3. Validate that nlprule catches everything Harper catches plus more
+4. Remove Harper dependency
+5. Add user custom rules UI
+6. Complete Phase 3 and Phase 4 as needed
+
+## Constraints
+
+- Pure Rust, no JVM dependency
+- Must work on Android arm64 (no dynamic linking to system libs)
+- Runtime budget: under 10ms for a typical dictation sentence
+- No network requests for grammar rules (data compiled in or loaded from local files)
+- English only for now, architecture stays language-agnostic
