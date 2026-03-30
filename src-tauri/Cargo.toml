@@ -41,6 +41,9 @@ arboard = "3"
 enigo = "0.3"
 tauri-plugin-global-shortcut = "2"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
 [dev-dependencies]
 rustfft = "6"
 hound = "3.5"

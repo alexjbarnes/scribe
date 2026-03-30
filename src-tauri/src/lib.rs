@@ -7,6 +7,8 @@ mod models;
 #[cfg(desktop)]
 mod paste;
 mod postprocess;
+#[cfg(desktop)]
+mod sound;
 mod recorder;
 pub mod speaker;
 mod transcribe;
@@ -316,6 +318,7 @@ pub fn run() {
                 // Alt+D: press to start recording, release to stop and paste
                 let shortcut = Shortcut::new(Some(Modifiers::ALT), Code::KeyD);
                 let app_handle = app.handle().clone();
+                let paste_target: std::sync::Mutex<Option<paste::PasteTarget>> = std::sync::Mutex::new(None);
                 app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
                     let state = app_handle.state::<AppState>();
                     match event.state {
@@ -323,6 +326,8 @@ pub fn run() {
                             if state.recording.load(Ordering::SeqCst) {
                                 return;
                             }
+                            // Capture which app has focus NOW so we can paste back to it later
+                            *paste_target.lock().unwrap() = paste::capture_frontmost_app();
                             let guard = state.engine.lock().unwrap();
                             let Some(ref engine) = *guard else {
                                 log::warn!("Shortcut: engine not ready");
@@ -332,6 +337,7 @@ pub fn run() {
                             match engine.start_streaming() {
                                 Ok(()) => {
                                     state.recording.store(true, Ordering::SeqCst);
+                                    sound::play_start();
                                     let _ = app_handle.emit("dictation-state", "recording");
                                     log::info!("Shortcut: recording started");
                                 }
@@ -345,8 +351,11 @@ pub fn run() {
                             if !state.recording.swap(false, Ordering::SeqCst) {
                                 return;
                             }
+                            sound::play_stop();
                             let _ = app_handle.emit("dictation-state", "processing");
                             log::info!("Shortcut: stopping recording");
+
+                            let paste_target = paste_target.lock().unwrap().take();
 
                             let pending = {
                                 let guard = state.engine.lock().unwrap();
@@ -376,8 +385,16 @@ pub fn run() {
                                                     "audio_duration_ms": result.audio_duration_ms,
                                                     "transcribe_ms": result.transcribe_ms,
                                                 }));
-                                            if let Err(e) = paste::paste(&result.text) {
-                                                log::error!("Shortcut: paste failed: {e}");
+                                            match paste::paste(&result.text, paste_target.as_ref()) {
+                                                Ok(paste::PasteResult::Pasted) => {}
+                                                Ok(paste::PasteResult::ClipboardOnly) => {
+                                                    sound::play_error();
+                                                    let _ = app_for_paste.emit("paste-fallback", "Text copied to clipboard — paste manually with Cmd+V");
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Shortcut: paste failed: {e}");
+                                                    sound::play_error();
+                                                }
                                             }
                                         }
                                         None => {

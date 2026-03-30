@@ -463,7 +463,9 @@ class VerbaAccessibilityService : AccessibilityService() {
 
             val before = currentText.substring(0, selStart.coerceAtMost(currentText.length))
             val after = currentText.substring(selEnd.coerceAtMost(currentText.length))
-            val newText = before + text + after
+            val adjusted = adjustForContext(text, before, after)
+            logD("injectText: context before=${before.takeLast(20)} after=${after.take(20)} → $adjusted")
+            val newText = before + adjusted + after
 
             val args = Bundle().apply {
                 putCharSequence(
@@ -473,7 +475,7 @@ class VerbaAccessibilityService : AccessibilityService() {
             }
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
                 logI("injectText: ACTION_SET_TEXT succeeded")
-                val newCursor = before.length + text.length
+                val newCursor = before.length + adjusted.length
                 val selArgs = Bundle().apply {
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newCursor)
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newCursor)
@@ -505,6 +507,46 @@ class VerbaAccessibilityService : AccessibilityService() {
             copyToClipboard(text)
             toast("Verba: copied to clipboard")
         }
+    }
+
+    /**
+     * Adjust transcribed text based on surrounding context in the text field.
+     * - Mid-sentence: lowercase first letter, drop trailing period
+     * - Start of field / after sentence-ending punctuation: keep as-is
+     * - Add leading space if text before doesn't end with whitespace
+     */
+    private fun adjustForContext(text: String, before: String, after: String): String {
+        if (text.isEmpty()) return text
+
+        var result = text
+
+        // Should we capitalize?
+        val trimmedBefore = before.trimEnd()
+        val atSentenceStart = before.isEmpty()
+                || trimmedBefore.endsWith('.')
+                || trimmedBefore.endsWith('!')
+                || trimmedBefore.endsWith('?')
+                || trimmedBefore.endsWith('\n')
+
+        if (!atSentenceStart && result[0].isUpperCase()) {
+            result = result[0].lowercase() + result.substring(1)
+        }
+
+        // Remove trailing period if there's text after cursor
+        if (after.trimStart().isNotEmpty() && result.endsWith('.')) {
+            result = result.dropLast(1)
+        }
+
+        // Add leading space if needed
+        if (before.isNotEmpty()
+            && !before.endsWith(' ')
+            && !before.endsWith('\n')
+            && !before.endsWith('\t')
+        ) {
+            result = " $result"
+        }
+
+        return result
     }
 
     private fun copyToClipboard(text: String) {

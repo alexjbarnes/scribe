@@ -26,10 +26,10 @@ pub struct VadParams {
 impl Default for VadParams {
     fn default() -> Self {
         Self {
-            threshold: 0.4,
+            threshold: 0.3,
             min_silence_duration: 0.3,
             min_speech_duration: 0.1,
-            prefill_ms: 300,
+            prefill_ms: 500,
         }
     }
 }
