@@ -183,7 +183,7 @@ impl Engine {
         self.model_id = model_id;
     }
 
-    /// Warm up the model by running a dummy transcription.
+    /// Warm up the model and post-processing pipeline.
     pub fn preload(&self) {
         log::info!("Engine: preloading model...");
         let silence = vec![0.0f32; 16000];
@@ -191,6 +191,7 @@ impl Engine {
             Ok(_) => log::info!("Engine: model preloaded"),
             Err(e) => log::warn!("Engine: preload error (expected for silence): {e}"),
         }
+        postprocess::warm_up();
     }
 
     /// Start recording with background VAD segment transcription.

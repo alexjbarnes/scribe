@@ -16,8 +16,7 @@ mod android_ime;
 
 use tauri::{Emitter, Manager};
 
-#[cfg(desktop)]
-struct DesktopState {
+struct AppState {
     engine: std::sync::Mutex<Option<engine::Engine>>,
     recording: std::sync::atomic::AtomicBool,
 }
@@ -54,7 +53,6 @@ fn clear_history(state: tauri::State<'_, history::History>) {
 
 /// Start a short enrollment recording. Creates a temporary recorder and
 /// speaker verifier, records 5 seconds, extracts and persists the embedding.
-/// Works on both desktop and Android.
 #[tauri::command]
 fn enroll_speaker(app: tauri::AppHandle) -> Result<(), String> {
     let mgr = app.state::<models::ModelManager>();
@@ -89,16 +87,13 @@ fn enroll_speaker(app: tauri::AppHandle) -> Result<(), String> {
         speaker::save_enrollment(&embedding)?;
     }
 
-    // On desktop, also update the engine's in-memory verifier
-    #[cfg(desktop)]
-    {
-        let ds = app.state::<DesktopState>();
-        let guard = ds.engine.lock().unwrap();
-        if let Some(ref engine) = *guard {
-            if let Some(v) = engine.verifier() {
-                if let Some(emb) = speaker::load_enrollment() {
-                    v.enroll_from_embedding(emb);
-                }
+    // Update the app engine's in-memory verifier
+    let state = app.state::<AppState>();
+    let guard = state.engine.lock().unwrap();
+    if let Some(ref eng) = *guard {
+        if let Some(v) = eng.verifier() {
+            if let Some(emb) = speaker::load_enrollment() {
+                v.enroll_from_embedding(emb);
             }
         }
     }
@@ -109,17 +104,14 @@ fn enroll_speaker(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn clear_speaker_enrollment(app: tauri::AppHandle) -> Result<(), String> {
-    #[cfg(desktop)]
-    {
-        let ds = app.state::<DesktopState>();
-        let guard = ds.engine.lock().unwrap();
-        if let Some(ref engine) = *guard {
-            if let Some(verifier) = engine.verifier() {
-                verifier.clear_enrollment();
-            }
+    let state = app.state::<AppState>();
+    let guard = state.engine.lock().unwrap();
+    if let Some(ref eng) = *guard {
+        if let Some(verifier) = eng.verifier() {
+            verifier.clear_enrollment();
         }
     }
-    let _ = &app; // suppress unused warning on mobile
+    drop(guard);
     speaker::delete_enrollment()?;
     Ok(())
 }
@@ -138,46 +130,38 @@ fn switch_model(
     state.set_active(&id)?;
     log::info!("Switched to model: {id}");
 
-    // Reload the IME overlay's transcriber in the background so the
-    // switch takes effect immediately without blocking the UI.
-    #[cfg(target_os = "android")]
-    {
-        let id = id.clone();
-        let app = app.clone();
-        std::thread::spawn(move || {
-            android_ime::reload_overlay_model(&id);
-            let _ = app.emit("model-loaded", serde_json::json!({ "id": &id }));
-        });
-    }
-
-    #[cfg(desktop)]
-    {
-        let id = id.clone();
-        let app = app.clone();
-        std::thread::spawn(move || {
-            let ds = app.state::<DesktopState>();
-            let mut guard = ds.engine.lock().unwrap();
-            if let Some(ref mut engine) = *guard {
-                if engine.model_id() != id {
-                    log::info!("Desktop: reloading model to {id}");
-                    let mgr = match models::ModelManager::new() {
-                        Ok(m) => m,
-                        Err(e) => {
-                            log::error!("Desktop: model manager error: {e}");
-                            return;
-                        }
-                    };
-                    if let Some((_mid, model_engine)) = mgr.first_downloaded_model() {
-                        match transcribe::Transcriber::new(model_engine) {
-                            Ok(t) => engine.reload_model(t, id.clone()),
-                            Err(e) => log::error!("Desktop: transcriber reload failed: {e}"),
-                        }
+    let app = app.clone();
+    let id = id.clone();
+    std::thread::spawn(move || {
+        // Reload the app engine's transcriber
+        let app_state = app.state::<AppState>();
+        let mut guard = app_state.engine.lock().unwrap();
+        if let Some(ref mut eng) = *guard {
+            if eng.model_id() != id {
+                log::info!("Reloading model to {id}");
+                let mgr = match models::ModelManager::new() {
+                    Ok(m) => m,
+                    Err(e) => {
+                        log::error!("Model manager error on reload: {e}");
+                        return;
+                    }
+                };
+                if let Some((_mid, model_engine)) = mgr.first_downloaded_model() {
+                    match transcribe::Transcriber::new(model_engine) {
+                        Ok(t) => eng.reload_model(t, id.clone()),
+                        Err(e) => log::error!("Transcriber reload failed: {e}"),
                     }
                 }
             }
-            let _ = app.emit("model-loaded", serde_json::json!({ "id": &id }));
-        });
-    }
+        }
+        drop(guard);
+
+        // On Android, also reload the IME overlay's separate engine
+        #[cfg(target_os = "android")]
+        android_ime::reload_overlay_model(&id);
+
+        let _ = app.emit("model-loaded", serde_json::json!({ "id": &id }));
+    });
 
     Ok(())
 }
@@ -198,28 +182,27 @@ fn delete_model(state: tauri::State<'_, models::ModelManager>, id: String) -> Re
     state.delete(&id)
 }
 
-/// Initialize the desktop Engine in the background: download VAD if needed,
-/// create recorder + transcriber, store in DesktopState.
-#[cfg(desktop)]
-fn desktop_init(app: tauri::AppHandle) {
+/// Initialize the Engine in the background: VAD, recorder, transcriber,
+/// speaker verifier, then preload model + post-processing pipeline.
+fn init_engine(app: tauri::AppHandle) {
     std::thread::Builder::new()
-        .name("desktop-init".into())
+        .name("engine-init".into())
         .spawn(move || {
             let mgr = match models::ModelManager::new() {
                 Ok(m) => m,
                 Err(e) => {
-                    log::error!("Desktop init: failed to create model manager: {e}");
+                    log::error!("Engine init: failed to create model manager: {e}");
                     return;
                 }
             };
 
             let vad = match mgr.ensure_vad_model() {
                 Ok(p) => {
-                    log::info!("Desktop init: VAD model at {}", p.display());
+                    log::info!("Engine init: VAD model at {}", p.display());
                     Some(p)
                 }
                 Err(e) => {
-                    log::warn!("Desktop init: VAD setup failed: {e}");
+                    log::warn!("Engine init: VAD setup failed: {e}");
                     None
                 }
             };
@@ -227,7 +210,7 @@ fn desktop_init(app: tauri::AppHandle) {
             let recorder = match recorder::AudioRecorder::new(vad.as_deref()) {
                 Ok(r) => r,
                 Err(e) => {
-                    log::error!("Desktop init: failed to create recorder: {e}");
+                    log::error!("Engine init: failed to create recorder: {e}");
                     return;
                 }
             };
@@ -235,51 +218,51 @@ fn desktop_init(app: tauri::AppHandle) {
             let (model_id, model_engine) = match mgr.first_downloaded_model() {
                 Some(pair) => pair,
                 None => {
-                    log::warn!("Desktop init: no model downloaded yet");
+                    log::warn!("Engine init: no model downloaded yet");
                     return;
                 }
             };
 
-            log::info!("Desktop init: loading model {model_id}");
+            log::info!("Engine init: loading model {model_id}");
             let transcriber = match transcribe::Transcriber::new(model_engine) {
                 Ok(t) => t,
                 Err(e) => {
-                    log::error!("Desktop init: failed to create transcriber: {e}");
+                    log::error!("Engine init: failed to create transcriber: {e}");
                     return;
                 }
             };
 
             let verifier = match mgr.ensure_speaker_model() {
                 Ok(p) => {
-                    log::info!("Desktop init: speaker model at {}", p.display());
+                    log::info!("Engine init: speaker model at {}", p.display());
                     match speaker::SpeakerVerifier::new(&p) {
                         Ok(v) => {
-                            // Restore saved enrollment if present
                             if let Some(embedding) = speaker::load_enrollment() {
                                 v.enroll_from_embedding(embedding);
-                                log::info!("Desktop init: restored speaker enrollment");
+                                log::info!("Engine init: restored speaker enrollment");
                             }
                             Some(v)
                         }
                         Err(e) => {
-                            log::warn!("Desktop init: speaker verifier failed: {e}");
+                            log::warn!("Engine init: speaker verifier failed: {e}");
                             None
                         }
                     }
                 }
                 Err(e) => {
-                    log::warn!("Desktop init: speaker model setup failed: {e}");
+                    log::warn!("Engine init: speaker model setup failed: {e}");
                     None
                 }
             };
 
             let engine = engine::Engine::new(recorder, transcriber, model_id.clone(), verifier);
+            engine.preload();
 
-            let state = app.state::<DesktopState>();
+            let state = app.state::<AppState>();
             *state.engine.lock().unwrap() = Some(engine);
 
-            log::info!("Desktop init: ready (model: {model_id})");
-            let _ = app.emit("desktop-ready", ());
+            log::info!("Engine init: ready (model: {model_id})");
+            let _ = app.emit("engine-ready", ());
         })
         .ok();
 }
@@ -298,8 +281,6 @@ pub fn run() {
     }
 
     builder.setup(|app| {
-            // Android: set data dir env var for config/models path resolution.
-            // Must happen before ModelManager::new() which reads this.
             #[cfg(target_os = "android")]
             {
                 if let Ok(data_dir) = app.path().app_data_dir() {
@@ -320,8 +301,11 @@ pub fn run() {
 
             app.manage(model_manager);
             app.manage(history::History::new());
+            app.manage(AppState {
+                engine: std::sync::Mutex::new(None),
+                recording: std::sync::atomic::AtomicBool::new(false),
+            });
 
-            // Desktop: global shortcut, system tray, hide-on-close
             #[cfg(desktop)]
             {
                 use std::sync::atomic::Ordering;
@@ -329,16 +313,11 @@ pub fn run() {
                 use tauri::tray::TrayIconBuilder;
                 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
-                app.manage(DesktopState {
-                    engine: std::sync::Mutex::new(None),
-                    recording: std::sync::atomic::AtomicBool::new(false),
-                });
-
                 // Alt+D: press to start recording, release to stop and paste
                 let shortcut = Shortcut::new(Some(Modifiers::ALT), Code::KeyD);
                 let app_handle = app.handle().clone();
                 app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
-                    let state = app_handle.state::<DesktopState>();
+                    let state = app_handle.state::<AppState>();
                     match event.state {
                         ShortcutState::Pressed => {
                             if state.recording.load(Ordering::SeqCst) {
@@ -382,10 +361,9 @@ pub fn run() {
                                 }
                             };
 
-                            // Heavy transcription work off the shortcut callback
                             let app_for_paste = app_handle.clone();
                             std::thread::Builder::new()
-                                .name("desktop-transcribe".into())
+                                .name("transcribe".into())
                                 .spawn(move || {
                                     match pending.finalize() {
                                         Some(result) => {
@@ -448,49 +426,27 @@ pub fn run() {
                         }
                     });
                 }
-
-                // Initialize engine in background (loads VAD + model)
-                desktop_init(app.handle().clone());
             }
+
+            // Initialize engine in background (shared path for all platforms)
+            init_engine(app.handle().clone());
 
             Ok(())
         })
-        .invoke_handler({
-            #[cfg(desktop)]
-            {
-                tauri::generate_handler![
-                    list_models,
-                    list_audio_devices,
-                    get_config,
-                    save_config,
-                    download_model,
-                    delete_model,
-                    switch_model,
-                    list_history,
-                    clear_history,
-                    enroll_speaker,
-                    clear_speaker_enrollment,
-                    get_speaker_enrollment_status,
-                ]
-            }
-            #[cfg(not(desktop))]
-            {
-                tauri::generate_handler![
-                    list_models,
-                    list_audio_devices,
-                    get_config,
-                    save_config,
-                    download_model,
-                    delete_model,
-                    switch_model,
-                    list_history,
-                    clear_history,
-                    enroll_speaker,
-                    clear_speaker_enrollment,
-                    get_speaker_enrollment_status,
-                ]
-            }
-        })
+        .invoke_handler(tauri::generate_handler![
+            list_models,
+            list_audio_devices,
+            get_config,
+            save_config,
+            download_model,
+            delete_model,
+            switch_model,
+            list_history,
+            clear_history,
+            enroll_speaker,
+            clear_speaker_enrollment,
+            get_speaker_enrollment_status,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

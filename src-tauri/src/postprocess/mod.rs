@@ -45,6 +45,14 @@ fn get_pipeline() -> &'static Pipeline {
     })
 }
 
+/// Force-initialize the pipeline (Harper dictionary + rules).
+/// Call during startup so the first transcription isn't slow.
+pub fn warm_up() {
+    let t = Instant::now();
+    let _ = get_pipeline();
+    log::info!("Pipeline: warm-up took {}ms", t.elapsed().as_millis());
+}
+
 /// Run the full post-processing pipeline on transcribed text.
 /// Returns the final text along with snapshots after each stage that made a change.
 pub fn postprocess(text: &str) -> PipelineResult {

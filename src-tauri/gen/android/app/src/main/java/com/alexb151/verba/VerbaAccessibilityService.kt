@@ -17,7 +17,6 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.content.SharedPreferences
-import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.widget.Toast
 import java.util.concurrent.Executors
@@ -66,8 +65,8 @@ class VerbaAccessibilityService : AccessibilityService() {
     private var lastTouchY = 0f
     private var isDragging = false
 
-    private var ringView: ImageView? = null
-    private var ringAnimator: ObjectAnimator? = null
+    private var ringView: RoundedRingView? = null
+    private var ringAnimator: ValueAnimator? = null
 
     // Debounced hide to avoid flickering when keyboard opens
     private var pendingHide: Runnable? = null
@@ -225,12 +224,11 @@ class VerbaAccessibilityService : AccessibilityService() {
         val density = resources.displayMetrics.density
         val buttonSize = (48 * density).toInt()
 
-        val ringSize = (60 * density).toInt()
+        val ringSize = (56 * density).toInt()
         val container = FrameLayout(this)
 
         // Recording ring (hidden by default, sits behind button)
-        val ring = ImageView(this).apply {
-            setImageResource(R.drawable.recording_ring)
+        val ring = RoundedRingView(this).apply {
             visibility = View.GONE
         }
         val ringLp = FrameLayout.LayoutParams(ringSize, ringSize).apply {
@@ -387,10 +385,11 @@ class VerbaAccessibilityService : AccessibilityService() {
         ringView?.let { ring ->
             ring.visibility = View.VISIBLE
             ringAnimator?.cancel()
-            ringAnimator = ObjectAnimator.ofFloat(ring, "rotation", 0f, 360f).apply {
-                duration = 1200
+            ringAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = 1500
                 repeatCount = ValueAnimator.INFINITE
                 interpolator = android.view.animation.LinearInterpolator()
+                addUpdateListener { ring.setPhase(it.animatedValue as Float) }
                 start()
             }
         }
@@ -400,7 +399,6 @@ class VerbaAccessibilityService : AccessibilityService() {
         ringAnimator?.cancel()
         ringAnimator = null
         ringView?.visibility = View.GONE
-        ringView?.rotation = 0f
     }
 
     private fun startRecording() {
@@ -562,6 +560,45 @@ class VerbaAccessibilityService : AccessibilityService() {
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+    }
+
+    private inner class RoundedRingView(context: android.content.Context) : View(context) {
+        private val dp = resources.displayMetrics.density
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 3f * dp
+            color = 0xFFFF4444.toInt()
+            strokeCap = android.graphics.Paint.Cap.ROUND
+        }
+        private val path = android.graphics.Path()
+        private val measure = android.graphics.PathMeasure()
+        private var totalLength = 0f
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            val inset = paint.strokeWidth / 2f
+            val cr = 15f * dp
+            path.reset()
+            path.addRoundRect(
+                inset, inset, w - inset, h - inset,
+                cr, cr, android.graphics.Path.Direction.CW
+            )
+            measure.setPath(path, true)
+            totalLength = measure.length
+        }
+
+        fun setPhase(phase: Float) {
+            if (totalLength <= 0f) return
+            val dash = totalLength * 0.75f
+            val gap = totalLength * 0.25f
+            paint.pathEffect = android.graphics.DashPathEffect(
+                floatArrayOf(dash, gap), phase * totalLength
+            )
+            invalidate()
+        }
+
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            if (totalLength > 0f) canvas.drawPath(path, paint)
+        }
     }
 
     override fun onDestroy() {
