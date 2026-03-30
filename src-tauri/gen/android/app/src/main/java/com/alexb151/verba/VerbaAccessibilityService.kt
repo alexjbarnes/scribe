@@ -633,26 +633,35 @@ class VerbaAccessibilityService : AccessibilityService() {
         } catch (_: Exception) { true }
     }
 
-    @Suppress("DEPRECATION")
     private fun hapticFeedback(heavy: Boolean = false) {
         if (!isHapticEnabled()) return
         try {
-            val vibrator = getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
+            val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                val vm = getSystemService(VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
             if (vibrator == null || !vibrator.hasVibrator()) {
                 logW("haptic: no vibrator")
                 return
             }
 
-            val ms = if (heavy) 150L else 80L
-            val effect = android.os.VibrationEffect.createOneShot(
-                ms, android.os.VibrationEffect.DEFAULT_AMPLITUDE
+            val effect = if (heavy) {
+                android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_HEAVY_CLICK)
+            } else {
+                android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK)
+            }
+
+            // USAGE_ACCESSIBILITY is exempt from haptic-disabled setting
+            // and background UID suppression -- exactly right for an
+            // accessibility service overlay.
+            val attrs = android.os.VibrationAttributes.createForUsage(
+                android.os.VibrationAttributes.USAGE_ACCESSIBILITY
             )
-            val attrs = android.media.AudioAttributes.Builder()
-                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
             vibrator.vibrate(effect, attrs)
-            logD("haptic: fired ${ms}ms with audio attrs")
+            logD("haptic: fired ${if (heavy) "heavy" else "light"} click (USAGE_ACCESSIBILITY)")
         } catch (e: Exception) {
             logW("haptic failed: $e")
         }
