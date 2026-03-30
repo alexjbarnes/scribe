@@ -5,8 +5,6 @@ use std::path::PathBuf;
 pub struct AppConfig {
     pub language: String,
     pub threads: u32,
-    pub ollama_url: String,
-    pub ollama_model: String,
     pub output_dir: String,
     pub device_index: i32,
     pub active_engine: String,
@@ -18,8 +16,6 @@ impl Default for AppConfig {
         Self {
             language: "en".into(),
             threads: 4,
-            ollama_url: "http://localhost:11434".into(),
-            ollama_model: "gemma3:4b".into(),
             output_dir: dirs::document_dir()
                 .map(|d| d.join("Meetings").to_string_lossy().into_owned())
                 .unwrap_or_default(),
@@ -34,12 +30,12 @@ impl AppConfig {
     fn config_path() -> Option<PathBuf> {
         #[cfg(target_os = "android")]
         {
-            std::env::var_os("SCRIBE_DATA_DIR")
+            std::env::var_os("VERBA_DATA_DIR")
                 .map(|d| PathBuf::from(d).join("config.toml"))
         }
         #[cfg(not(target_os = "android"))]
         {
-            dirs::config_dir().map(|d| d.join("scribe").join("config.toml"))
+            dirs::config_dir().map(|d| d.join("verba").join("config.toml"))
         }
     }
 
@@ -87,8 +83,6 @@ mod tests {
         let cfg = AppConfig {
             language: "fr".into(),
             threads: 8,
-            ollama_url: "http://localhost:9999".into(),
-            ollama_model: "test-model".into(),
             output_dir: "/tmp/test".into(),
             device_index: 2,
             active_engine: "parakeet".into(),
@@ -100,7 +94,6 @@ mod tests {
 
         assert_eq!(deserialized.language, "fr");
         assert_eq!(deserialized.threads, 8);
-        assert_eq!(deserialized.ollama_url, "http://localhost:9999");
         assert_eq!(deserialized.device_index, 2);
         assert_eq!(deserialized.active_engine, "parakeet");
         assert_eq!(deserialized.active_model_id, "parakeet-v3-int8");
@@ -123,8 +116,6 @@ threads = 2
         let full = r#"
 language = "en"
 threads = 4
-ollama_url = "http://localhost:11434"
-ollama_model = "gemma3:4b"
 output_dir = "/tmp"
 device_index = -1
 active_engine = "whisper"

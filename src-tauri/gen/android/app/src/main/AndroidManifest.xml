@@ -8,10 +8,10 @@
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <application
-        android:name=".ScribeApp"
+        android:name=".VerbaApp"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.scribe_rs"
+        android:theme="@style/Theme.verba_rs"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
@@ -28,7 +28,7 @@
         </activity>
 
         <service
-            android:name=".ScribeAccessibilityService"
+            android:name=".VerbaAccessibilityService"
             android:label="@string/accessibility_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:exported="false">

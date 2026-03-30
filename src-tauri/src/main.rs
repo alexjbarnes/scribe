@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    scribe_rs_lib::run()
+    verba_rs_lib::run()
 }

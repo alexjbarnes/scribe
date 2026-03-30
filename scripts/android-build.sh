@@ -2,10 +2,14 @@
 #
 # Build Scribe for Android (arm64-v8a).
 #
+# NOTE: For day-to-day builds, use `just apk` instead. This script is
+# primarily useful for first-time setup (--setup-only) to build and cache
+# the sherpa-onnx native libraries.
+#
 # Usage:
-#   ./scripts/android-build.sh              # debug APK
-#   ./scripts/android-build.sh --release    # release APK
-#   ./scripts/android-build.sh --setup-only # just install deps and init project
+#   ./scripts/android-build.sh --setup-only # build sherpa-onnx libs (first time)
+#   ./scripts/android-build.sh              # debug APK (prefer `just apk`)
+#   ./scripts/android-build.sh --release    # release APK (prefer `just apk-release`)
 #
 # Prerequisites (installed automatically where possible):
 #   - Android SDK with platform 34 (ANDROID_HOME)

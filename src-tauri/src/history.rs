@@ -3,6 +3,15 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::postprocess::PipelineStage;
+
+/// Timing for a single transcription chunk (VAD segment or tail).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChunkTiming {
+    pub audio_ms: u64,
+    pub transcribe_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub timestamp: String,
@@ -11,6 +20,16 @@ pub struct HistoryEntry {
     pub duration_ms: u64,
     #[serde(default)]
     pub audio_duration_ms: u64,
+    #[serde(default)]
+    pub postprocess_ms: u64,
+    #[serde(default)]
+    pub pipeline_stages: Vec<PipelineStage>,
+    #[serde(default)]
+    pub chunk_timings: Vec<ChunkTiming>,
+    #[serde(default)]
+    pub filtered_segments: u32,
+    #[serde(default)]
+    pub filtered_audio_ms: u64,
 }
 
 pub struct History {
@@ -25,13 +44,29 @@ impl History {
         }
     }
 
-    pub fn add(&self, text: String, model_id: String, duration_ms: u64, audio_duration_ms: u64) {
+    pub fn add(
+        &self,
+        text: String,
+        model_id: String,
+        duration_ms: u64,
+        audio_duration_ms: u64,
+        postprocess_ms: u64,
+        pipeline_stages: Vec<PipelineStage>,
+        chunk_timings: Vec<ChunkTiming>,
+        filtered_segments: u32,
+        filtered_audio_ms: u64,
+    ) {
         let entry = HistoryEntry {
             timestamp: chrono::Utc::now().to_rfc3339(),
             text,
             model_id,
             duration_ms,
             audio_duration_ms,
+            postprocess_ms,
+            pipeline_stages,
+            chunk_timings,
+            filtered_segments,
+            filtered_audio_ms,
         };
         let mut entries = self.entries.lock().unwrap();
         entries.push(entry);
@@ -41,6 +76,11 @@ impl History {
     }
 
     pub fn list(&self) -> Vec<HistoryEntry> {
+        // Reload from disk to pick up entries written by the IME path
+        // (which uses a separate History instance).
+        if let Some(entries) = Self::load_from_disk() {
+            *self.entries.lock().unwrap() = entries;
+        }
         self.entries.lock().unwrap().clone()
     }
 
@@ -55,12 +95,12 @@ impl History {
     fn history_path() -> Option<PathBuf> {
         #[cfg(target_os = "android")]
         {
-            std::env::var_os("SCRIBE_DATA_DIR")
+            std::env::var_os("VERBA_DATA_DIR")
                 .map(|d| PathBuf::from(d).join("history.json"))
         }
         #[cfg(not(target_os = "android"))]
         {
-            dirs::config_dir().map(|d| d.join("scribe").join("history.json"))
+            dirs::config_dir().map(|d| d.join("verba").join("history.json"))
         }
     }
 

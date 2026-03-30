@@ -15,17 +15,39 @@ pub struct Vad {
     prefill: PrefillBuffer,
 }
 
+/// Tunable VAD parameters.
+pub struct VadParams {
+    pub threshold: f32,
+    pub min_silence_duration: f32,
+    pub min_speech_duration: f32,
+    pub prefill_ms: u32,
+}
+
+impl Default for VadParams {
+    fn default() -> Self {
+        Self {
+            threshold: 0.4,
+            min_silence_duration: 0.3,
+            min_speech_duration: 0.1,
+            prefill_ms: 300,
+        }
+    }
+}
+
 impl Vad {
-    /// Create a new VAD from a Silero ONNX model file.
-    ///
-    /// - `prefill_ms`: how many milliseconds of pre-speech audio to retain (e.g. 300)
+    /// Create a new VAD with default parameters.
     pub fn new(model_path: &Path, prefill_ms: u32) -> Result<Self, String> {
+        Self::with_params(model_path, VadParams { prefill_ms, ..Default::default() })
+    }
+
+    /// Create a new VAD with custom parameters.
+    pub fn with_params(model_path: &Path, params: VadParams) -> Result<Self, String> {
         let config = VadModelConfig {
             silero_vad: SileroVadModelConfig {
                 model: Some(model_path.to_string_lossy().into_owned()),
-                threshold: 0.4,
-                min_silence_duration: 0.3,
-                min_speech_duration: 0.1,
+                threshold: params.threshold,
+                min_silence_duration: params.min_silence_duration,
+                min_speech_duration: params.min_speech_duration,
                 window_size: WINDOW_SIZE,
                 ..Default::default()
             },
@@ -37,7 +59,7 @@ impl Vad {
         let detector = VoiceActivityDetector::create(&config, 60.0)
             .ok_or("failed to create VAD")?;
 
-        let prefill_samples = (SAMPLE_RATE as u32 * prefill_ms / 1000) as usize;
+        let prefill_samples = (SAMPLE_RATE as u32 * params.prefill_ms / 1000) as usize;
 
         Ok(Self {
             detector,

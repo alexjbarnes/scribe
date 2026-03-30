@@ -84,7 +84,7 @@ mod tests {
             return;
         };
 
-        let test_text = "scribe_test_clipboard_roundtrip";
+        let test_text = "verba_test_clipboard_roundtrip";
         let saved = clipboard.get_text().ok();
 
         clipboard.set_text(test_text).unwrap();

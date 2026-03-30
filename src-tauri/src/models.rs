@@ -82,14 +82,14 @@ impl ModelManager {
     fn default_base_dir() -> Result<PathBuf, String> {
         #[cfg(target_os = "android")]
         {
-            std::env::var_os("SCRIBE_DATA_DIR")
+            std::env::var_os("VERBA_DATA_DIR")
                 .map(|d| PathBuf::from(d).join("models"))
-                .ok_or_else(|| "SCRIBE_DATA_DIR not set".into())
+                .ok_or_else(|| "VERBA_DATA_DIR not set".into())
         }
         #[cfg(not(target_os = "android"))]
         {
             dirs::data_dir()
-                .map(|d| d.join("scribe").join("models"))
+                .map(|d| d.join("verba").join("models"))
                 .ok_or_else(|| "no data dir".into())
         }
     }
@@ -233,35 +233,46 @@ impl ModelManager {
         self.base_dir.join("silero_vad.onnx")
     }
 
-    /// Download the Silero VAD model if not already present.
-    pub async fn ensure_vad_model(&self) -> Result<PathBuf, String> {
+    /// Ensure the Silero VAD model exists on disk, writing it from the
+    /// embedded binary if needed. Returns the path to the ONNX file.
+    pub fn ensure_vad_model(&self) -> Result<PathBuf, String> {
         let path = self.vad_model_path();
         if path.exists() {
             return Ok(path);
         }
 
-        log::info!("Downloading Silero VAD model...");
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(SILERO_VAD_URL)
-            .send()
-            .await
-            .map_err(|e| format!("VAD download: {e}"))?;
-
-        if !resp.status().is_success() {
-            return Err(format!("VAD download HTTP {}", resp.status()));
-        }
-
-        let bytes = resp.bytes().await.map_err(|e| format!("VAD read: {e}"))?;
+        log::info!("Writing embedded Silero VAD model to {}", path.display());
         let tmp = path.with_extension("tmp");
-        tokio::fs::write(&tmp, &bytes)
-            .await
+        std::fs::write(&tmp, SILERO_VAD_BYTES)
             .map_err(|e| format!("VAD write: {e}"))?;
-        tokio::fs::rename(&tmp, &path)
-            .await
+        std::fs::rename(&tmp, &path)
             .map_err(|e| format!("VAD rename: {e}"))?;
 
-        log::info!("Silero VAD model downloaded ({} KB)", bytes.len() / 1024);
+        log::info!("Silero VAD model written ({} KB)", SILERO_VAD_BYTES.len() / 1024);
+        Ok(path)
+    }
+
+    /// Path where the speaker embedding model should live.
+    pub fn speaker_model_path(&self) -> PathBuf {
+        self.base_dir.join("speaker_embed.onnx")
+    }
+
+    /// Ensure the speaker embedding model exists on disk, writing it from
+    /// the embedded binary if needed. Returns the path to the ONNX file.
+    pub fn ensure_speaker_model(&self) -> Result<PathBuf, String> {
+        let path = self.speaker_model_path();
+        if path.exists() {
+            return Ok(path);
+        }
+
+        log::info!("Writing embedded speaker embedding model to {}", path.display());
+        let tmp = path.with_extension("tmp");
+        std::fs::write(&tmp, SPEAKER_EMBED_BYTES)
+            .map_err(|e| format!("Speaker model write: {e}"))?;
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| format!("Speaker model rename: {e}"))?;
+
+        log::info!("Speaker embedding model written ({} KB)", SPEAKER_EMBED_BYTES.len() / 1024);
         Ok(path)
     }
 
@@ -422,8 +433,8 @@ impl ModelManager {
 
 // ── Registry ──
 
-const SILERO_VAD_URL: &str =
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
+const SILERO_VAD_BYTES: &[u8] = include_bytes!("../silero_vad.onnx");
+const SPEAKER_EMBED_BYTES: &[u8] = include_bytes!("../speaker_embed.onnx");
 
 const HF_WHISPER_BASE_EN: &str =
     "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base.en/resolve/main";

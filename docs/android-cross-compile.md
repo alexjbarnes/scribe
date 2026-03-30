@@ -3,52 +3,84 @@
 Hard-won lessons from porting Scribe (Tauri v2 + Rust + sherpa-onnx) to Android arm64.
 Written March 2026.
 
-## Toolchain Setup
+## Quick Start
 
-Required environment:
-
-```
-ANDROID_HOME=$HOME/Android/Sdk
-ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.0.13004108
-JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-```
-
-Rust target:
+Build a signed APK with one command:
 
 ```
-rustup target add aarch64-linux-android
+just apk
 ```
+
+Output: `scribe.apk` in the repo root (~51MB, arm64 only).
+
+Other commands:
+
+```
+just apk-release   # release APK
+just test           # run Rust library tests
+just check          # fast compile check (no linking)
+just clean          # nuke all build artifacts
+```
+
+The justfile handles everything: native Rust compilation via cargo-ndk, stripping debug
+symbols, copying frontend assets, Gradle packaging, and signing with a persistent debug
+keystore.
+
+## Prerequisites
+
+- Android SDK with platform 34+ (`ANDROID_HOME`)
+- Android NDK r28+ (`ANDROID_NDK_HOME`)
+- JDK 17+ (`JAVA_HOME`)
+- Rust aarch64-linux-android target: `rustup target add aarch64-linux-android`
+- cargo-ndk: `cargo install cargo-ndk`
+- cmake, ninja-build (for sherpa-onnx native libs)
+- Pre-built sherpa-onnx static libraries at `.android-deps/sherpa-onnx/install/lib/`
+
+Environment variables are auto-detected by the justfile from standard locations. Override
+with `ANDROID_HOME`, `ANDROID_NDK_HOME`, `JAVA_HOME` env vars if your setup differs.
 
 NDK 28+ is required for Google Play's 16KB page alignment. JDK 17 works with Gradle 8.x.
 
-Build command:
+## First-Time Setup
+
+sherpa-onnx native libraries must be built from source once. The `scripts/android-build.sh`
+script handles this:
 
 ```
-npx tauri android build --target aarch64 --apk
+./scripts/android-build.sh --setup-only
 ```
 
-Sign for testing:
+This clones sherpa-onnx, cross-compiles for arm64-v8a via CMake, and caches the static
+libraries in `.android-deps/sherpa-onnx/install/lib/`. Takes 10-15 minutes. After that,
+`just apk` works without repeating this step.
 
-```
-BT=$ANDROID_HOME/build-tools/35.0.0
-$BT/zipalign -f 4 app-universal-release-unsigned.apk scribe-debug.apk
-$BT/apksigner sign \
-    --ks /tmp/debug-keystore.jks \
-    --ks-pass pass:android \
-    --key-pass pass:android \
-    --ks-key-alias androiddebugkey \
-    scribe-debug.apk
-```
+## Build Pipeline Details
 
-Create a debug keystore if you don't have one:
+The `just apk` recipe runs these steps in order:
 
-```
-keytool -genkey -v -keystore /tmp/debug-keystore.jks \
-    -keyalg RSA -keysize 2048 -validity 10000 \
-    -alias androiddebugkey \
-    -storepass android -keypass android \
-    -dname "CN=Debug,O=Debug,C=US"
-```
+1. **Keystore** - generates `debug.keystore` in repo root on first run (gitignored)
+2. **Tauri CLI** - `npx tauri android build --target aarch64 --apk` handles Rust compilation,
+   frontend bundling, and Gradle packaging in one step
+3. **Strip** - removes debug symbols with llvm-strip (80MB -> 40MB), removes stale x86_64 stubs
+4. **Sign** - zipalign + apksigner with the debug keystore
+
+### Why use `npx tauri android build`?
+
+The Tauri CLI sets critical environment variables (`TAURI_ENV_TARGET_TRIPLE`,
+`WRY_ANDROID_PACKAGE`, etc.) during Rust compilation that affect how the Android WebView
+serves frontend assets at runtime. Building with `cargo ndk` directly bypasses this setup,
+which causes the WebView to fail with "Failed to request http://tauri.localhost/".
+
+The justfile adds stripping and custom signing as post-build steps on top of the Tauri CLI
+build.
+
+### Signing
+
+The debug keystore lives at `debug.keystore` in the repo root (gitignored). It persists
+across builds so Android accepts APK upgrades without uninstalling. If you lose it, you need
+to uninstall the app on the device before installing a new APK signed with a different key.
+
+Password: `android` (standard Android debug convention).
 
 ## The Dynamic Linker Problem
 

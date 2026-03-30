@@ -14,6 +14,10 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.classList.remove('border-transparent', 'text-on-surface-variant');
     btn.classList.add('border-primary', 'text-primary');
     document.getElementById(btn.dataset.tab).classList.remove('hidden');
+
+    // Refresh data when switching to relevant tabs
+    if (btn.dataset.tab === 'tab-history') loadHistory();
+    if (btn.dataset.tab === 'tab-models') loadModels();
   });
 });
 
@@ -52,6 +56,89 @@ function formatAudioDuration(ms) {
   return mins + 'm ' + rem + 's spoken';
 }
 
+function renderChunkTimings(chunks) {
+  if (!chunks || chunks.length === 0) return '';
+  let html = '<div class="mt-2">';
+  html += '<span class="text-[10px] font-semibold uppercase tracking-wider text-primary/70">Transcription chunks</span>';
+  html += '<div class="mt-1 space-y-0.5">';
+  let total = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i];
+    total += c.transcribe_ms;
+    const audioSec = (c.audio_ms / 1000).toFixed(1);
+    html += `<p class="text-xs text-on-surface-variant font-mono">${c.transcribe_ms}ms (${audioSec}s audio)</p>`;
+  }
+  if (chunks.length > 1) {
+    html += `<p class="text-xs text-on-surface-variant font-mono font-semibold">Total: ${total}ms</p>`;
+  }
+  html += '</div></div>';
+  return html;
+}
+
+function renderPipelineStages(stages, chunkTimings) {
+  const hasStages = stages && stages.length > 1;
+  const hasChunks = chunkTimings && chunkTimings.length > 0;
+  if (!hasStages && !hasChunks) return '';
+
+  let html = '<div class="pipeline-stages hidden mt-3 pt-3 border-t border-outline-variant/20 space-y-2">';
+  if (hasChunks) {
+    html += renderChunkTimings(chunkTimings);
+  }
+  if (hasStages) {
+    for (const stage of stages) {
+      const dim = stage.changed === false ? ' opacity-40' : '';
+      const tag = stage.changed === false ? ' (no change)' : '';
+      const timing = stage.duration_ms ? ` ${stage.duration_ms}ms` : '';
+      html += `
+        <div class="${dim}">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-primary/70">${escapeHtml(stage.name)}${tag}${timing}</span>
+          <p class="text-xs text-on-surface-variant leading-relaxed mt-0.5 select-text">${escapeHtml(stage.text)}</p>
+        </div>`;
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+function formatEntryForCopy(entry) {
+  const lines = [entry.text, ''];
+
+  const stats = [];
+  if (entry.timestamp) stats.push(formatTimestamp(entry.timestamp));
+  if (entry.audio_duration_ms) stats.push(formatAudioDuration(entry.audio_duration_ms));
+  if (entry.duration_ms) stats.push(formatDuration(entry.duration_ms) + ' to transcribe');
+  if (entry.postprocess_ms) stats.push(entry.postprocess_ms + 'ms postprocess');
+  const speed = formatSpeed(entry);
+  if (speed) stats.push(speed);
+  if (entry.filtered_segments) stats.push(entry.filtered_segments + ' filtered (' + (entry.filtered_audio_ms / 1000).toFixed(1) + 's)');
+  if (entry.model_id) stats.push(entry.model_id);
+  lines.push(stats.join(' | '));
+
+  if (entry.chunk_timings && entry.chunk_timings.length > 0) {
+    lines.push('', 'Chunks:');
+    let total = 0;
+    for (const c of entry.chunk_timings) {
+      total += c.transcribe_ms;
+      lines.push('  ' + c.transcribe_ms + 'ms (' + (c.audio_ms / 1000).toFixed(1) + 's audio)');
+    }
+    if (entry.chunk_timings.length > 1) {
+      lines.push('  Total: ' + total + 'ms');
+    }
+  }
+
+  if (entry.pipeline_stages && entry.pipeline_stages.length > 1) {
+    const totalLabel = entry.postprocess_ms ? ` (${entry.postprocess_ms}ms total)` : '';
+    lines.push('', 'Pipeline' + totalLabel + ':');
+    for (const stage of entry.pipeline_stages) {
+      const tag = stage.changed === false ? ' (no change)' : '';
+      const timing = stage.duration_ms ? ` [${stage.duration_ms}ms]` : '';
+      lines.push('  ' + stage.name + tag + timing + ': ' + stage.text);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 function renderHistory(entries) {
   historyList.innerHTML = '';
   if (!entries || entries.length === 0) {
@@ -66,19 +153,49 @@ function renderHistory(entries) {
     const card = document.createElement('div');
     card.className = 'bg-surface-container-low rounded-xl border border-outline-variant/20 p-4';
 
+    const hasStages = entry.pipeline_stages && entry.pipeline_stages.length > 1;
+    const hasChunks = entry.chunk_timings && entry.chunk_timings.length > 0;
+    const hasDetails = hasStages || hasChunks;
+
     const stats = [
       formatTimestamp(entry.timestamp),
       formatAudioDuration(entry.audio_duration_ms),
       formatDuration(entry.duration_ms) + ' to transcribe',
+      entry.postprocess_ms ? entry.postprocess_ms + 'ms postprocess' : null,
       formatSpeed(entry),
+      entry.filtered_segments ? entry.filtered_segments + ' filtered (' + (entry.filtered_audio_ms / 1000).toFixed(1) + 's)' : null,
       escapeHtml(entry.model_id),
     ].filter(Boolean);
 
+    const toggleBtn = hasDetails
+      ? '<button class="pipeline-toggle text-[10px] font-semibold text-primary/70 hover:text-primary transition-colors cursor-pointer">Details</button>'
+      : '';
+
     card.innerHTML = `
-      <p class="text-sm text-on-surface leading-relaxed mb-2">${escapeHtml(entry.text)}</p>
+      <p class="text-sm text-on-surface leading-relaxed mb-2 select-text">${escapeHtml(entry.text)}</p>
       <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-on-surface-variant">
         ${stats.map(s => '<span>' + s + '</span>').join('')}
-      </div>`;
+        ${toggleBtn}
+        <button class="copy-entry-btn text-[10px] font-semibold text-primary/70 hover:text-primary transition-colors cursor-pointer">Copy</button>
+      </div>
+      ${renderPipelineStages(entry.pipeline_stages, entry.chunk_timings)}`;
+
+    if (hasDetails) {
+      card.querySelector('.pipeline-toggle').addEventListener('click', (e) => {
+        const stagesEl = card.querySelector('.pipeline-stages');
+        stagesEl.classList.toggle('hidden');
+        e.target.textContent = stagesEl.classList.contains('hidden') ? 'Details' : 'Hide';
+      });
+    }
+
+    card.querySelector('.copy-entry-btn').addEventListener('click', (e) => {
+      const text = formatEntryForCopy(entry);
+      navigator.clipboard.writeText(text).then(() => {
+        e.target.textContent = 'Copied!';
+        setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
+      });
+    });
+
     historyList.appendChild(card);
   }
 }
@@ -87,6 +204,15 @@ function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
   return div.innerHTML;
+}
+
+function showToast(msg) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  el.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-surface-container-highest text-on-surface text-sm px-5 py-3 rounded-xl shadow-lg border border-outline-variant/20 transition-opacity duration-300';
+  document.body.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; }, 2500);
+  setTimeout(() => { el.remove(); }, 2800);
 }
 
 async function loadHistory() {
@@ -200,6 +326,7 @@ async function loadModels() {
       const id = btn.dataset.id;
       try {
         await invoke('switch_model', { id });
+        showToast('Switching model...');
       } catch (err) {
         console.error('Switch failed:', err);
         alert(`Failed to switch model: ${err}`);
@@ -259,6 +386,11 @@ listen('download-complete', async () => {
   await loadModels();
 });
 
+listen('model-loaded', (event) => {
+  const id = event.payload?.id || '';
+  showToast(`Model ready: ${id}`);
+});
+
 // ── Audio tab ──
 
 async function loadAudioDevices() {
@@ -280,8 +412,6 @@ async function loadConfig() {
   const cfg = await invoke('get_config');
   document.getElementById('cfg-language').value = cfg.language;
   document.getElementById('cfg-threads').value = cfg.threads;
-  document.getElementById('cfg-ollama-url').value = cfg.ollama_url;
-  document.getElementById('cfg-ollama-model').value = cfg.ollama_model;
   document.getElementById('cfg-output-dir').value = cfg.output_dir;
   // Restore audio device selection
   document.getElementById('audio-device').value = cfg.device_index;
@@ -291,8 +421,6 @@ async function saveConfig() {
   const cfg = {
     language: document.getElementById('cfg-language').value,
     threads: parseInt(document.getElementById('cfg-threads').value, 10),
-    ollama_url: document.getElementById('cfg-ollama-url').value,
-    ollama_model: document.getElementById('cfg-ollama-model').value,
     output_dir: document.getElementById('cfg-output-dir').value,
     device_index: parseInt(document.getElementById('audio-device').value, 10),
     active_engine: 'whisper',
@@ -308,6 +436,64 @@ async function saveConfig() {
     alert(`Save failed: ${err}`);
   }
 }
+
+// ── Voice Enrollment ──
+
+const enrollBtn = document.getElementById('enroll-btn');
+const clearEnrollBtn = document.getElementById('clear-enroll-btn');
+const enrollmentLabel = document.getElementById('enrollment-label');
+const enrollmentRecording = document.getElementById('enrollment-recording');
+
+async function loadEnrollmentStatus() {
+  try {
+    const enrolled = await invoke('get_speaker_enrollment_status');
+    if (enrolled) {
+      enrollmentLabel.textContent = 'Enrolled. Only your voice will be transcribed.';
+      clearEnrollBtn.classList.remove('hidden');
+    } else {
+      enrollmentLabel.textContent = 'Not enrolled. All voices will be transcribed.';
+      clearEnrollBtn.classList.add('hidden');
+    }
+  } catch (_) {
+    // Command may not exist on mobile
+  }
+}
+
+enrollBtn.addEventListener('click', async () => {
+  enrollBtn.disabled = true;
+  enrollBtn.textContent = 'Recording...';
+  enrollBtn.classList.add('opacity-50');
+  enrollmentRecording.classList.remove('hidden');
+  enrollmentRecording.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  // Let the browser paint the recording UI before the invoke blocks
+  await new Promise(r => setTimeout(r, 100));
+
+  try {
+    await invoke('enroll_speaker');
+    enrollmentLabel.textContent = 'Enrolled. Only your voice will be transcribed.';
+    clearEnrollBtn.classList.remove('hidden');
+    showToast('Voice enrolled successfully');
+  } catch (err) {
+    showToast('Enrollment failed: ' + err);
+  }
+
+  enrollmentRecording.classList.add('hidden');
+  enrollBtn.disabled = false;
+  enrollBtn.textContent = 'Enroll Voice';
+  enrollBtn.classList.remove('opacity-50');
+});
+
+clearEnrollBtn.addEventListener('click', async () => {
+  try {
+    await invoke('clear_speaker_enrollment');
+    enrollmentLabel.textContent = 'Not enrolled. All voices will be transcribed.';
+    clearEnrollBtn.classList.add('hidden');
+    showToast('Voice enrollment cleared');
+  } catch (err) {
+    showToast('Failed to clear enrollment: ' + err);
+  }
+});
 
 // ── Debug tab ──
 
@@ -345,6 +531,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadModels();
   await loadAudioDevices();
   await loadConfig();
+  await loadEnrollmentStatus();
 
   document.getElementById('save-config').addEventListener('click', saveConfig);
 });

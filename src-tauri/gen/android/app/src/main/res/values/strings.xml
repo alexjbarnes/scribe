@@ -1,6 +1,6 @@
 <resources>
-    <string name="app_name">Scribe</string>
-    <string name="main_activity_title">Scribe</string>
-    <string name="accessibility_label">Scribe Dictation</string>
+    <string name="app_name">Verba</string>
+    <string name="main_activity_title">Verba</string>
+    <string name="accessibility_label">Verba Dictation</string>
     <string name="accessibility_description">Shows a floating microphone button when a text field is focused. Tap to dictate and insert transcribed text.</string>
 </resources>

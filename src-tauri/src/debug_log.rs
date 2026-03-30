@@ -51,7 +51,7 @@ impl log::Log for FrontendLogger {
                 unsafe {
                     __android_log_write(
                         prio,
-                        b"scribe\0".as_ptr() as *const libc::c_char,
+                        b"verba\0".as_ptr() as *const libc::c_char,
                         c_msg.as_ptr(),
                     );
                 }

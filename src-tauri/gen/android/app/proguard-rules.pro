@@ -21,9 +21,9 @@
 #-renamesourcefileattribute SourceFile
 
 # Keep JNI native methods for accessibility service
--keep class com.alexb151.scribe.ScribeAccessibilityService {
+-keep class com.alexb151.verba.VerbaAccessibilityService {
     native <methods>;
 }
--keep class com.alexb151.scribe.ScribeApp {
+-keep class com.alexb151.verba.VerbaApp {
     *;
 }
