@@ -168,7 +168,13 @@ fn init_engine(app: tauri::AppHandle) {
         .name("engine-init".into())
         .spawn(move || {
             if engine::is_initialized() {
-                log::info!("Engine init: already initialized (by IME), skipping");
+                log::info!("Engine init: already initialized, skipping");
+                let _ = app.emit("engine-ready", ());
+                return;
+            }
+            if !engine::try_claim_init() {
+                log::info!("Engine init: another thread is building the engine, waiting");
+                engine::wait_until_ready();
                 let _ = app.emit("engine-ready", ());
                 return;
             }

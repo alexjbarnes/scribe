@@ -41,6 +41,11 @@ pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeI
         log::info!("Overlay: engine already initialized, reusing");
         return JNI_TRUE;
     }
+    if !engine::try_claim_init() {
+        log::info!("Overlay: engine being built by another thread, waiting");
+        engine::wait_until_ready();
+        return JNI_TRUE;
+    }
 
     log::info!("Overlay: initializing engine (first entry point)");
 

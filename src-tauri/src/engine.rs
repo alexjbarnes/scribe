@@ -8,6 +8,7 @@
 //! Android IME accessibility service share the same instance, so the
 //! ONNX model is only loaded once.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::thread::JoinHandle;
 
@@ -18,9 +19,24 @@ use crate::speaker::SpeakerVerifier;
 use crate::transcribe::Transcriber;
 
 static ENGINE: OnceLock<Mutex<Option<Engine>>> = OnceLock::new();
+static INIT_CLAIMED: AtomicBool = AtomicBool::new(false);
 
 fn engine_cell() -> &'static Mutex<Option<Engine>> {
     ENGINE.get_or_init(|| Mutex::new(None))
+}
+
+/// Atomically claim the right to build the engine. Returns true if this
+/// caller won and should proceed with init. Returns false if another
+/// thread already started building -- the caller should wait.
+pub fn try_claim_init() -> bool {
+    !INIT_CLAIMED.swap(true, Ordering::SeqCst)
+}
+
+/// Block until the engine singleton is ready (another thread is building it).
+pub fn wait_until_ready() {
+    while !is_initialized() {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 /// Initialize the global engine singleton. Safe to call from multiple
