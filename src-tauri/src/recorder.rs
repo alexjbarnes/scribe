@@ -126,7 +126,7 @@ impl AudioRecorder {
             .name("audio-recorder".into())
             .spawn(move || {
                 let vad = match vad_path {
-                    Some(ref path) => match Vad::new(path, 300) {
+                    Some(ref path) => match Vad::new(path, 500) {
                         Ok(v) => {
                             let _ = ready_tx.send(Ok(()));
                             Some(v)
@@ -252,7 +252,6 @@ fn worker(cmd_rx: mpsc::Receiver<Cmd>, event_tx: mpsc::Sender<Event>, mut vad: O
                                 }
                                 LoopExit::Disconnected => {
                                     if !samples.is_empty() {
-                                        // Got some audio before disconnect, keep it
                                         log::info!(
                                             "Stream disconnected after capturing {:.1}s",
                                             samples.len() as f32 / TARGET_SAMPLE_RATE as f32
@@ -297,6 +296,7 @@ fn worker(cmd_rx: mpsc::Receiver<Cmd>, event_tx: mpsc::Sender<Event>, mut vad: O
 /// Reads the configured device_index from AppConfig. If -1 or invalid,
 /// falls back to the system default input device.
 fn open_stream() -> Result<StreamHandle, String> {
+    let t = std::time::Instant::now();
     let host = cpal::default_host();
     let cfg = crate::config::AppConfig::load();
     let device = if cfg.device_index >= 0 {
@@ -383,7 +383,7 @@ fn open_stream() -> Result<StreamHandle, String> {
         .play()
         .map_err(|e| format!("start stream: {e}"))?;
 
-    log::info!("Recording at {device_rate}Hz, {channels}ch -> {TARGET_SAMPLE_RATE}Hz");
+    log::info!("Recording at {device_rate}Hz, {channels}ch -> {TARGET_SAMPLE_RATE}Hz (stream opened in {}ms)", t.elapsed().as_millis());
 
     Ok(StreamHandle {
         stream,
@@ -407,6 +407,7 @@ fn record_loop(
     let mut exit_reason = LoopExit::Disconnected;
     let max_segment_samples = (TARGET_SAMPLE_RATE as f32 * MAX_SEGMENT_SECS) as usize;
     let mut samples_since_segment: usize = 0;
+    let mut segments_sent: usize = 0;
 
     loop {
         // Check for stop command
@@ -454,6 +455,7 @@ fn record_loop(
                             samples_since_segment = 0;
                             if let Some(ref tx) = segment_tx {
                                 let _ = tx.send(segment);
+                                segments_sent += 1;
                             } else {
                                 speech_samples.extend_from_slice(&segment);
                             }
@@ -467,6 +469,7 @@ fn record_loop(
                             if let Some(segment) = v.flush() {
                                 if let Some(ref tx) = segment_tx {
                                     let _ = tx.send(segment);
+                                    segments_sent += 1;
                                 } else {
                                     speech_samples.extend_from_slice(&segment);
                                 }
@@ -518,12 +521,25 @@ fn record_loop(
         // Only the flushed tail remains in speech_samples.
         let total = all_samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
         let tail = speech_samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
-        if speech_samples.is_empty() {
-            log::info!("Streaming: all {total:.1}s handled by segments, no tail");
+        if speech_samples.is_empty() && segments_sent == 0 {
+            // VAD detected no speech at all, but there might be audio the
+            // VAD missed (short utterances, noisy environments). Fall back
+            // to raw audio so the transcriber gets a chance.
+            let min_fallback = (TARGET_SAMPLE_RATE as f32 * 0.5) as usize;
+            if all_samples.len() > min_fallback {
+                log::info!("Streaming: VAD found no speech in {total:.1}s, falling back to raw audio");
+                all_samples
+            } else {
+                log::info!("Streaming: no speech in {total:.1}s (too short for fallback)");
+                speech_samples
+            }
+        } else if speech_samples.is_empty() {
+            log::info!("Streaming: all {total:.1}s sent as {segments_sent} segments, no tail");
+            speech_samples
         } else {
-            log::info!("Streaming: {tail:.1}s tail remaining from {total:.1}s total");
+            log::info!("Streaming: {tail:.1}s tail remaining from {total:.1}s total ({segments_sent} segments sent)");
+            speech_samples
         }
-        speech_samples
     } else if vad.is_some() && !speech_samples.is_empty() {
         log::info!(
             "VAD kept {:.1}s of speech from {:.1}s total",
