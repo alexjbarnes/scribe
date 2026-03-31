@@ -343,7 +343,22 @@ fn open_stream() -> Result<StreamHandle, String> {
         supported.sample_format()
     );
 
-    let stream_config: cpal::StreamConfig = supported.into();
+    let mut stream_config: cpal::StreamConfig = supported.clone().into();
+
+    // Request a small buffer for lower latency. 256 frames at 48kHz is ~5ms,
+    // which helps reduce the time between stream.play() and first audio callback.
+    // If the device doesn't support our target, clamp to its range.
+    const TARGET_BUFFER_FRAMES: u32 = 256;
+    match supported.buffer_size() {
+        cpal::SupportedBufferSize::Range { min, max } => {
+            let size = TARGET_BUFFER_FRAMES.clamp(*min, *max);
+            stream_config.buffer_size = cpal::BufferSize::Fixed(size);
+            log::info!("Buffer size: {size} frames (range {min}..{max})");
+        }
+        cpal::SupportedBufferSize::Unknown => {
+            log::info!("Buffer size: using platform default (range unknown)");
+        }
+    }
 
     let resampler = if device_rate != TARGET_SAMPLE_RATE {
         Some(
