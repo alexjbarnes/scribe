@@ -423,7 +423,7 @@ class VerbaAccessibilityService : AccessibilityService() {
     private fun startRecording() {
         logI("startRecording")
         recording = true
-        hapticFeedback(heavy = false)
+        hapticFeedback()
         startRecordingRing()
 
         executor.execute {
@@ -442,7 +442,7 @@ class VerbaAccessibilityService : AccessibilityService() {
     private fun stopAndTranscribe() {
         logI("stopAndTranscribe")
         recording = false
-        hapticFeedback(heavy = true)
+        hapticFeedback()
         showProcessingRing()
 
         executor.execute {
@@ -473,30 +473,50 @@ class VerbaAccessibilityService : AccessibilityService() {
         }
         logD("injectText: node=${node.className} editable=${node.isEditable} fromLive=${liveFocus != null}")
 
+        // Read existing text only for context (capitalization, spacing).
+        // We never rebuild the full string -- only paste our text at the cursor.
+        val selStart = node.textSelectionStart
+        val currentText = node.text?.toString() ?: ""
+        val before = if (selStart > 0) currentText.substring(0, selStart.coerceAtMost(currentText.length)) else ""
+        val selEnd = node.textSelectionEnd
+        val after = if (selEnd >= 0) currentText.substring(selEnd.coerceAtMost(currentText.length)) else ""
+        val adjusted = adjustForContext(text, before, after)
+        logD("injectText: sel=$selStart..$selEnd before=${before.takeLast(20)} after=${after.take(20)} → $adjusted")
+
+        // Clipboard paste: inserts at cursor, never touches existing text or placeholders.
         try {
-            val currentText = node.text?.toString() ?: ""
-            var selStart = node.textSelectionStart
-            var selEnd = node.textSelectionEnd
-            logD("injectText: currentLen=${currentText.length} sel=$selStart..$selEnd")
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            val oldClip = clipboard.primaryClip
+            clipboard.setPrimaryClip(ClipData.newPlainText("verba", adjusted))
+            val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            logI("injectText: ACTION_PASTE returned $pasted")
+            if (pasted) {
+                if (oldClip != null) {
+                    mainHandler.postDelayed({ clipboard.setPrimaryClip(oldClip) }, 500)
+                }
+                return
+            }
+            logW("injectText: ACTION_PASTE failed, trying ACTION_SET_TEXT")
+            // Restore clipboard before fallback
+            if (oldClip != null) clipboard.setPrimaryClip(oldClip)
+        } catch (e: Exception) {
+            logE("injectText: ACTION_PASTE threw: $e")
+        }
 
-            if (selStart < 0) selStart = currentText.length
-            if (selEnd < 0) selEnd = selStart
-
-            val before = currentText.substring(0, selStart.coerceAtMost(currentText.length))
-            val after = currentText.substring(selEnd.coerceAtMost(currentText.length))
-            val adjusted = adjustForContext(text, before, after)
-            logD("injectText: context before=${before.takeLast(20)} after=${after.take(20)} → $adjusted")
-            val newText = before + adjusted + after
-
+        // Fallback: ACTION_SET_TEXT (only for apps that don't support paste)
+        try {
+            val fallbackText = if (selStart < 0) {
+                // No cursor, field is empty/placeholder -- just set our text
+                adjusted
+            } else {
+                before + adjusted + after
+            }
             val args = Bundle().apply {
-                putCharSequence(
-                    AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                    newText
-                )
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, fallbackText)
             }
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
-                logI("injectText: ACTION_SET_TEXT succeeded")
-                val newCursor = before.length + adjusted.length
+                logI("injectText: ACTION_SET_TEXT fallback succeeded")
+                val newCursor = if (selStart < 0) adjusted.length else before.length + adjusted.length
                 val selArgs = Bundle().apply {
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newCursor)
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newCursor)
@@ -504,28 +524,12 @@ class VerbaAccessibilityService : AccessibilityService() {
                 node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
                 return
             }
-            logW("injectText: ACTION_SET_TEXT returned false, trying clipboard paste")
+            logW("injectText: ACTION_SET_TEXT also failed, text left on clipboard")
+            copyToClipboard(adjusted)
+            toast("Verba: copied to clipboard (paste failed)")
         } catch (e: Exception) {
             logE("injectText: ACTION_SET_TEXT threw: $e")
-        }
-
-        // Fallback: clipboard paste
-        try {
-            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-            val oldClip = clipboard.primaryClip
-            clipboard.setPrimaryClip(ClipData.newPlainText("verba", text))
-            val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-            logI("injectText: ACTION_PASTE returned $pasted")
-            if (!pasted) {
-                logW("injectText: paste failed, text left on clipboard")
-                toast("Verba: copied to clipboard (paste failed)")
-            }
-            if (oldClip != null) {
-                mainHandler.postDelayed({ clipboard.setPrimaryClip(oldClip) }, 500)
-            }
-        } catch (e: Exception) {
-            logE("injectText: clipboard paste threw: $e")
-            copyToClipboard(text)
+            copyToClipboard(adjusted)
             toast("Verba: copied to clipboard")
         }
     }
@@ -547,7 +551,7 @@ class VerbaAccessibilityService : AccessibilityService() {
                 || trimmedBefore.endsWith('.')
                 || trimmedBefore.endsWith('!')
                 || trimmedBefore.endsWith('?')
-                || trimmedBefore.endsWith('\n')
+                || before.endsWith('\n')
 
         if (!atSentenceStart && result[0].isUpperCase()) {
             result = result[0].lowercase() + result.substring(1)
@@ -633,7 +637,7 @@ class VerbaAccessibilityService : AccessibilityService() {
         } catch (_: Exception) { true }
     }
 
-    private fun hapticFeedback(heavy: Boolean = false) {
+    private fun hapticFeedback() {
         if (!isHapticEnabled()) return
         try {
             val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -648,11 +652,9 @@ class VerbaAccessibilityService : AccessibilityService() {
                 return
             }
 
-            val effect = if (heavy) {
-                android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_HEAVY_CLICK)
-            } else {
-                android.os.VibrationEffect.createPredefined(android.os.VibrationEffect.EFFECT_CLICK)
-            }
+            val effect = android.os.VibrationEffect.createPredefined(
+                android.os.VibrationEffect.EFFECT_CLICK
+            )
 
             // USAGE_ACCESSIBILITY is exempt from haptic-disabled setting
             // and background UID suppression -- exactly right for an
@@ -661,7 +663,7 @@ class VerbaAccessibilityService : AccessibilityService() {
                 android.os.VibrationAttributes.USAGE_ACCESSIBILITY
             )
             vibrator.vibrate(effect, attrs)
-            logD("haptic: fired ${if (heavy) "heavy" else "light"} click (USAGE_ACCESSIBILITY)")
+            logD("haptic: fired click (USAGE_ACCESSIBILITY)")
         } catch (e: Exception) {
             logW("haptic failed: $e")
         }
