@@ -294,11 +294,42 @@ fn worker(cmd_rx: mpsc::Receiver<Cmd>, event_tx: mpsc::Sender<Event>, mut vad: O
 }
 
 /// Open the mic and return the stream handle.
+/// Reads the configured device_index from AppConfig. If -1 or invalid,
+/// falls back to the system default input device.
 fn open_stream() -> Result<StreamHandle, String> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or("no input device available")?;
+    let cfg = crate::config::AppConfig::load();
+    let device = if cfg.device_index >= 0 {
+        // Look up the specific device by index
+        let idx = cfg.device_index as usize;
+        let mut found = None;
+        if let Ok(inputs) = host.input_devices() {
+            for (i, dev) in inputs.enumerate() {
+                if i == idx {
+                    if let Ok(name) = dev.name() {
+                        log::info!("Using configured input device [{idx}]: {name}");
+                    }
+                    found = Some(dev);
+                    break;
+                }
+            }
+        }
+        match found {
+            Some(dev) => dev,
+            None => {
+                log::warn!("Configured device_index {idx} not found, falling back to default");
+                host.default_input_device()
+                    .ok_or("no input device available")?
+            }
+        }
+    } else {
+        let dev = host.default_input_device()
+            .ok_or("no input device available")?;
+        if let Ok(name) = dev.name() {
+            log::info!("Using system default input device: {name}");
+        }
+        dev
+    };
 
     let supported = device
         .default_input_config()

@@ -10,11 +10,16 @@ pub struct AudioDevice {
 pub fn list_input_devices() -> Vec<AudioDevice> {
     let host = cpal::default_host();
     let mut devices = Vec::new();
+    let mut seen_names = std::collections::HashSet::new();
 
     if let Ok(inputs) = host.input_devices() {
         for (i, dev) in inputs.enumerate() {
             if let Ok(name) = dev.name() {
-                devices.push(AudioDevice { name, index: i });
+                // Skip duplicate device names (common on Android where cpal
+                // reports multiple input sources for the same physical mic).
+                if seen_names.insert(name.clone()) {
+                    devices.push(AudioDevice { name, index: i });
+                }
             }
         }
     }
