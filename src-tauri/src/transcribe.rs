@@ -37,8 +37,9 @@ pub struct Transcriber {
 }
 
 impl Transcriber {
-    /// Validate model files and spawn the worker thread. The ONNX model
-    /// is loaded lazily on the first transcription call.
+    /// Validate model files, spawn the worker thread, and block until the
+    /// ONNX model is fully loaded into memory. Returns an error if any
+    /// model file is missing or the recognizer fails to initialize.
     pub fn new(engine: ModelEngine) -> Result<Self, String> {
         match &engine {
             ModelEngine::Transducer { encoder, decoder, joiner, tokens } => {
@@ -77,16 +78,20 @@ impl Transcriber {
         };
 
         let (req_tx, req_rx) = mpsc::channel::<Request>();
-
-        log::info!("Transcriber ready (model dir: {model_dir})");
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
 
         let engine_clone = engine.clone();
         std::thread::Builder::new()
             .name("transcriber".into())
             .spawn(move || {
-                worker(req_rx, &model_dir, &engine_clone);
+                worker(req_rx, ready_tx, &model_dir, &engine_clone);
             })
             .map_err(|e| format!("spawn transcriber thread: {e}"))?;
+
+        // Block until the worker has loaded the recognizer (or failed).
+        ready_rx
+            .recv()
+            .map_err(|_| "transcriber thread died before ready".to_string())??;
 
         Ok(Self {
             req_tx,
@@ -145,32 +150,29 @@ fn create_recognizer(
 
 fn worker(
     req_rx: mpsc::Receiver<Request>,
+    ready_tx: mpsc::Sender<Result<(), String>>,
     model_dir: &str,
     engine: &ModelEngine,
 ) {
     let _ = std::env::set_current_dir(model_dir);
 
-    let mut recognizer: Option<sherpa_onnx::OfflineRecognizer> = None;
+    let load_start = Instant::now();
+    let recognizer = match create_recognizer(engine) {
+        Some(r) => {
+            log::info!("Model loaded in {}ms", load_start.elapsed().as_millis());
+            let _ = ready_tx.send(Ok(()));
+            r
+        }
+        None => {
+            let _ = ready_tx.send(Err("failed to create recognizer".into()));
+            return;
+        }
+    };
 
     while let Ok(req) = req_rx.recv() {
         let total_start = Instant::now();
 
-        if recognizer.is_none() {
-            let load_start = Instant::now();
-            match create_recognizer(engine) {
-                Some(r) => {
-                    let load_ms = load_start.elapsed().as_millis();
-                    log::info!("Model loaded in {load_ms}ms");
-                    recognizer = Some(r);
-                }
-                None => {
-                    let _ = req.result_tx.send(Err("failed to create recognizer".into()));
-                    continue;
-                }
-            }
-        }
-
-        let rec = recognizer.as_ref().unwrap();
+        let rec = &recognizer;
 
         let decode_start = Instant::now();
         let stream = rec.create_stream();

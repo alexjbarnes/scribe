@@ -257,14 +257,9 @@ impl Engine {
         self.model_id = model_id;
     }
 
-    /// Warm up the model and post-processing pipeline.
+    /// Warm up the post-processing pipeline.
+    /// The ONNX model is already loaded by the time Engine::new() returns.
     pub fn preload(&self) {
-        log::info!("Engine: preloading model...");
-        let silence = vec![0.0f32; 16000];
-        match self.transcriber.transcribe(silence, 16000) {
-            Ok(_) => log::info!("Engine: model preloaded"),
-            Err(e) => log::warn!("Engine: preload error (expected for silence): {e}"),
-        }
         postprocess::warm_up();
     }
 
