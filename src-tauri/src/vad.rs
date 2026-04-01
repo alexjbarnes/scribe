@@ -71,13 +71,15 @@ impl Vad {
     /// when a complete speech segment is detected (speaker stopped talking).
     /// Returns None if no complete segment is ready yet.
     pub fn accept(&mut self, samples: &[f32]) -> Option<Vec<f32>> {
-        // Only accumulate prefill while no speech is detected.
-        // Once speech starts, the buffer is frozen with pre-speech context
-        // so flush() can prepend it without duplicating speech audio.
-        if !self.detector.detected() {
+        // Check speech state before AND after processing to decide whether
+        // to accumulate prefill. Only push when speech is not active on
+        // either side, so the chunk that triggers detection goes only to
+        // the detector's internal buffer, not to both prefill and detector.
+        let was_detected = self.detector.detected();
+        self.detector.accept_waveform(samples);
+        if !was_detected && !self.detector.detected() {
             self.prefill.push(samples);
         }
-        self.detector.accept_waveform(samples);
 
         if !self.detector.is_empty() {
             let segment = self.detector.front()?;
