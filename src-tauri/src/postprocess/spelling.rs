@@ -118,8 +118,8 @@ fn should_protect(word: &str) -> bool {
     if word.chars().any(|c| c.is_ascii_digit()) {
         return true;
     }
-    // Single character — not worth correcting
-    if word.chars().count() <= 1 {
+    // Very short words (1-2 chars) are too ambiguous to correct safely
+    if word.chars().count() <= 2 {
         return true;
     }
     false

@@ -27,7 +27,12 @@ impl GrammarChecker {
 
     /// Correct grammatical errors in the text.
     pub fn correct(&self, text: &str) -> String {
-        self.rules.correct(text, &self.tokenizer)
+        // Suppress nlprule's verbose INFO-level disambiguation logging.
+        let prev = log::max_level();
+        log::set_max_level(log::LevelFilter::Warn);
+        let result = self.rules.correct(text, &self.tokenizer);
+        log::set_max_level(prev);
+        result
     }
 }
 

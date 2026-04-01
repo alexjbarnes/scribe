@@ -117,10 +117,21 @@ class VerbaAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
 
+        val typeName = when (event.eventType) {
+            AccessibilityEvent.TYPE_VIEW_FOCUSED -> "VIEW_FOCUSED"
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> "TEXT_CHANGED"
+            AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED -> "TEXT_SEL_CHANGED"
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WINDOW_STATE"
+            else -> return
+        }
+
         when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
                 val source = event.source ?: return
-                if (isEditableTextField(source)) {
+                val editable = isEditableTextField(source)
+                logD("overlay[$typeName]: class=${source.className} editable=$editable focused=${source.isFocused} sel=${source.textSelectionStart}..${source.textSelectionEnd}")
+                if (editable) {
+                    logI("overlay[$typeName]: SHOW (editable field focused)")
                     cancelPendingHide()
                     focusedNode?.recycle()
                     focusedNode = source
@@ -129,72 +140,114 @@ class VerbaAccessibilityService : AccessibilityService() {
                 } else {
                     source.recycle()
                     if (!recording) {
+                        logD("overlay[$typeName]: non-editable focused, scheduling hide")
                         scheduleHide()
                     }
                 }
             }
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED -> {
+                // Update tracked node if overlay is showing.
+                // Never trigger show from these (browser address bars
+                // fire TEXT_SEL_CHANGED on resume without user interaction).
                 val source = event.source ?: return
-                if (isEditableTextField(source)) {
-                    if (!isOverlayShowing) {
-                        cancelPendingHide()
-                        focusedNode?.recycle()
-                        focusedNode = source
-                        lastEditTextSeenMs = System.currentTimeMillis()
-                        showOverlay()
-                    } else {
-                        source.recycle()
-                    }
+                val editable = isEditableTextField(source)
+                logD("overlay[$typeName]: class=${source.className} editable=$editable focused=${source.isFocused} sel=${source.textSelectionStart}..${source.textSelectionEnd}")
+                if (editable && isOverlayShowing) {
+                    focusedNode?.recycle()
+                    focusedNode = source
+                    lastEditTextSeenMs = System.currentTimeMillis()
                 } else {
                     source.recycle()
                 }
             }
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
-                if (recording) return
-                // When an app comes to foreground, check if an editable field
-                // already has focus. This catches the case where the cursor
-                // was already in a text box before we switched to the app.
-                if (!isOverlayShowing) {
+                val pkg = event.packageName?.toString() ?: ""
+                val cls = event.className?.toString() ?: ""
+                logD("overlay[$typeName]: pkg=$pkg class=$cls")
+
+                // Ignore our own overlay
+                if (pkg == packageName) {
+                    logD("overlay[$typeName]: ignoring own package")
+                    return
+                }
+
+                // Keyboard appeared: always show the overlay. The soft keyboard
+                // only appears for text input, so this is a reliable signal.
+                // In WebViews the editable node may not be findable, but
+                // injectText() will locate it when needed.
+                if (cls.contains("SoftInputWindow") || cls.contains("InputMethodService")) {
+                    logD("overlay[$typeName]: keyboard appeared")
+                    cancelPendingHide()
                     val editable = findFocusedEditText()
                     if (editable != null) {
-                        cancelPendingHide()
+                        logI("overlay[$typeName]: SHOW (keyboard + focused editable: ${editable.className})")
                         focusedNode?.recycle()
                         focusedNode = editable
-                        lastEditTextSeenMs = System.currentTimeMillis()
-                        showOverlay()
-                        return
+                    } else {
+                        logI("overlay[$typeName]: SHOW (keyboard opened, no editable found yet)")
                     }
+                    lastEditTextSeenMs = System.currentTimeMillis()
+                    showOverlay()
+                    return
                 }
-                scheduleHide()
+
+                // Ignore system UI packages (notifications, spell check, etc.)
+                if (pkg.startsWith("com.android.systemui")
+                    || pkg.startsWith("com.google.android.ext.services")
+                    || pkg.startsWith("com.google.android.inputmethod")) {
+                    logD("overlay[$typeName]: ignoring system package")
+                    return
+                }
+
+                // Real app-level window change: only hide if it looks like an
+                // activity switch (not a popup/dialog within the current app).
+                if (recording) {
+                    logD("overlay[$typeName]: recording active, not hiding")
+                    return
+                }
+
+                if (cls.contains("Activity")) {
+                    if (!isOverlayShowing) {
+                        val editable = findFocusedEditText()
+                        if (editable != null) {
+                            logI("overlay[$typeName]: SHOW (activity + focused editable: ${editable.className})")
+                            cancelPendingHide()
+                            focusedNode?.recycle()
+                            focusedNode = editable
+                            lastEditTextSeenMs = System.currentTimeMillis()
+                            showOverlay()
+                            return
+                        }
+                        logD("overlay[$typeName]: no focused editable found")
+                    }
+                    scheduleHide()
+                } else {
+                    logD("overlay[$typeName]: ignoring non-activity window ($cls)")
+                }
             }
         }
     }
 
     private fun scheduleHide() {
+        if (recording) {
+            logD("overlay[scheduleHide]: recording active, not scheduling")
+            return
+        }
         cancelPendingHide()
         pendingHide = Runnable {
+            if (recording) {
+                logD("overlay[scheduleHide]: recording active, skipping hide")
+                return@Runnable
+            }
             val focused = findFocusedEditText()
             if (focused != null) {
+                logD("overlay[scheduleHide]: still focused (${focused.className}), keeping overlay")
                 focusedNode?.recycle()
                 focusedNode = focused
                 lastEditTextSeenMs = System.currentTimeMillis()
-            } else if (focusedNode?.refresh() == true && isEditableTextField(focusedNode!!)) {
-                lastEditTextSeenMs = System.currentTimeMillis()
             } else {
-                val rootEditable = findEditableInRoot()
-                if (rootEditable != null) {
-                    focusedNode?.recycle()
-                    focusedNode = rootEditable
-                    lastEditTextSeenMs = System.currentTimeMillis()
-                    return@Runnable
-                }
-
-                val elapsed = System.currentTimeMillis() - lastEditTextSeenMs
-                if (elapsed < 2000 && isOverlayShowing) {
-                    mainHandler.postDelayed(pendingHide!!, 500)
-                    return@Runnable
-                }
+                logI("overlay[scheduleHide]: no focused editable, HIDE")
                 hideOverlay()
                 focusedNode?.recycle()
                 focusedNode = null
@@ -473,50 +526,31 @@ class VerbaAccessibilityService : AccessibilityService() {
         }
         logD("injectText: node=${node.className} editable=${node.isEditable} fromLive=${liveFocus != null}")
 
-        // Read existing text only for context (capitalization, spacing).
-        // We never rebuild the full string -- only paste our text at the cursor.
+        // Read existing text for context. If the field is showing hint text
+        // (placeholder), treat it as empty to avoid contaminating the output.
         val selStart = node.textSelectionStart
-        val currentText = node.text?.toString() ?: ""
+        val rawText = node.text?.toString() ?: ""
+        val isHint = node.isShowingHintText || (node.hintText != null && rawText == node.hintText.toString())
+        val currentText = if (isHint) "" else rawText
         val before = if (selStart > 0) currentText.substring(0, selStart.coerceAtMost(currentText.length)) else ""
         val selEnd = node.textSelectionEnd
-        val after = if (selEnd >= 0) currentText.substring(selEnd.coerceAtMost(currentText.length)) else ""
+        val after = if (selEnd >= 0 && !isHint) currentText.substring(selEnd.coerceAtMost(currentText.length)) else ""
         val adjusted = adjustForContext(text, before, after)
-        logD("injectText: sel=$selStart..$selEnd before=${before.takeLast(20)} after=${after.take(20)} → $adjusted")
+        logD("injectText: sel=$selStart..$selEnd hint=$isHint before=${before.takeLast(20)} after=${after.take(20)} -> $adjusted")
 
-        // Clipboard paste: inserts at cursor, never touches existing text or placeholders.
+        // Primary: ACTION_SET_TEXT (doesn't touch clipboard)
         try {
-            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
-            val oldClip = clipboard.primaryClip
-            clipboard.setPrimaryClip(ClipData.newPlainText("verba", adjusted))
-            val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
-            logI("injectText: ACTION_PASTE returned $pasted")
-            if (pasted) {
-                if (oldClip != null) {
-                    mainHandler.postDelayed({ clipboard.setPrimaryClip(oldClip) }, 500)
-                }
-                return
-            }
-            logW("injectText: ACTION_PASTE failed, trying ACTION_SET_TEXT")
-            // Restore clipboard before fallback
-            if (oldClip != null) clipboard.setPrimaryClip(oldClip)
-        } catch (e: Exception) {
-            logE("injectText: ACTION_PASTE threw: $e")
-        }
-
-        // Fallback: ACTION_SET_TEXT (only for apps that don't support paste)
-        try {
-            val fallbackText = if (selStart < 0) {
-                // No cursor, field is empty/placeholder -- just set our text
+            val fullText = if (isHint || selStart < 0) {
                 adjusted
             } else {
                 before + adjusted + after
             }
             val args = Bundle().apply {
-                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, fallbackText)
+                putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, fullText)
             }
             if (node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
-                logI("injectText: ACTION_SET_TEXT fallback succeeded")
-                val newCursor = if (selStart < 0) adjusted.length else before.length + adjusted.length
+                logI("injectText: ACTION_SET_TEXT succeeded")
+                val newCursor = if (isHint || selStart < 0) adjusted.length else before.length + adjusted.length
                 val selArgs = Bundle().apply {
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, newCursor)
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, newCursor)
@@ -524,11 +558,28 @@ class VerbaAccessibilityService : AccessibilityService() {
                 node.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selArgs)
                 return
             }
-            logW("injectText: ACTION_SET_TEXT also failed, text left on clipboard")
+            logW("injectText: ACTION_SET_TEXT failed, trying ACTION_PASTE")
+        } catch (e: Exception) {
+            logE("injectText: ACTION_SET_TEXT threw: $e")
+        }
+
+        // Fallback: clipboard paste (for apps that don't support SET_TEXT)
+        try {
+            val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+            val oldClip = clipboard.primaryClip
+            clipboard.setPrimaryClip(ClipData.newPlainText("verba", adjusted))
+            val pasted = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            logI("injectText: ACTION_PASTE returned $pasted")
+            // Always restore previous clipboard
+            if (oldClip != null) {
+                mainHandler.postDelayed({ clipboard.setPrimaryClip(oldClip) }, 300)
+            }
+            if (pasted) return
+            logW("injectText: ACTION_PASTE also failed")
             copyToClipboard(adjusted)
             toast("Verba: copied to clipboard (paste failed)")
         } catch (e: Exception) {
-            logE("injectText: ACTION_SET_TEXT threw: $e")
+            logE("injectText: ACTION_PASTE threw: $e")
             copyToClipboard(adjusted)
             toast("Verba: copied to clipboard")
         }
@@ -589,38 +640,17 @@ class VerbaAccessibilityService : AccessibilityService() {
             val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
                 ?: return null
             if (isEditableTextField(focused)) {
-                return focused
-            }
-            val editable = findEditableChild(focused)
-            if (editable != null) {
-                focused.recycle()
-                return editable
+                // Accept if OS reports it focused, or if it has a cursor
+                // position (WebView fields may not report isFocused but do
+                // have a valid selection when the user taps in).
+                if (focused.isFocused || focused.textSelectionStart >= 0) {
+                    return focused
+                }
             }
             focused.recycle()
             null
         } catch (e: Exception) {
             logE("findFocusedEditText: $e")
-            null
-        }
-    }
-
-    private fun findEditableChild(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            if (isEditableTextField(child)) return child
-            val found = findEditableChild(child)
-            child.recycle()
-            if (found != null) return found
-        }
-        return null
-    }
-
-    private fun findEditableInRoot(): AccessibilityNodeInfo? {
-        return try {
-            val root = rootInActiveWindow ?: return null
-            findEditableChild(root)
-        } catch (e: Exception) {
-            logE("findEditableInRoot: $e")
             null
         }
     }
