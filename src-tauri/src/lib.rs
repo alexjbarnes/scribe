@@ -130,22 +130,23 @@ async fn switch_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
     log::info!("Switched to model: {id}");
 
     let id_for_thread = id.clone();
-    tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
         let mgr = models::ModelManager::global();
-        engine::with_mut(|eng| {
-            if eng.model_id() != id_for_thread {
-                log::info!("Reloading model to {id_for_thread}");
-                if let Some((_mid, model_engine)) = mgr.first_downloaded_model() {
-                    match transcribe::Transcriber::new(model_engine) {
-                        Ok(t) => eng.reload_model(t, id_for_thread.clone()),
-                        Err(e) => log::error!("Transcriber reload failed: {e}"),
-                    }
-                }
+        let result = engine::with_mut(|eng| {
+            if eng.model_id() == id_for_thread {
+                return Ok(());
             }
+            log::info!("Reloading model to {id_for_thread}");
+            let (_mid, model_engine) = mgr.first_downloaded_model()
+                .ok_or_else(|| format!("model {id_for_thread} not downloaded"))?;
+            let t = transcribe::Transcriber::new(model_engine)?;
+            eng.reload_model(t, id_for_thread.clone());
+            Ok(())
         });
+        result.unwrap_or_else(|| Err("engine not initialized".into()))
     })
     .await
-    .map_err(|e| format!("model reload failed: {e}"))?;
+    .map_err(|e| format!("model reload failed: {e}"))??;
 
     let _ = app.emit("model-loaded", serde_json::json!({ "id": &id }));
     Ok(())
