@@ -4,7 +4,6 @@
 //! - Numbers: "twenty three" -> "23"
 //! - Currency: "twenty three dollars" -> "$23"
 //! - Dates: "january fifth" -> "January 5"
-//! - Ordinals: "first" -> "1st"
 //! - Common abbreviations: "mister" -> "Mr."
 
 use std::collections::HashMap;
@@ -182,14 +181,6 @@ pub fn normalize(text: &str) -> String {
             continue;
         }
 
-        // Standalone ordinals
-        if let Some(ord) = ORDINALS.get(bare) {
-            let punct = trailing_punct(words[i]);
-            output.push(format!("{ord}{punct}"));
-            i += 1;
-            continue;
-        }
-
         output.push(words[i].to_string());
         i += 1;
     }
@@ -204,6 +195,7 @@ fn try_parse_number_sequence(words: &[&str], start: usize) -> Option<(String, us
     let mut current: u64 = 0;
     let mut consumed = 0;
     let mut found_any = false;
+    let mut last_cardinal: u64 = 0;
 
     let mut i = start;
     while i < words.len() {
@@ -211,7 +203,19 @@ fn try_parse_number_sequence(words: &[&str], start: usize) -> Option<(String, us
         let bare = lower.trim_matches(|c: char| c.is_ascii_punctuation());
 
         if let Some(&n) = CARDINALS.get(bare) {
+            // Only allow adding to current when it makes sense as a
+            // compound number: units (1-9) after tens (20-90).
+            // "twenty three" -> 23 (good: 3 after 20)
+            // "nineteen eighty" -> break (bad: 80 after 19, not a compound)
+            if found_any && (n >= 10 || last_cardinal < 20) && last_cardinal != 0 {
+                // Two non-combinable cardinals in a row. Stop here.
+                // Exception: units after a tens (e.g. "twenty" + "three")
+                if !(last_cardinal >= 20 && last_cardinal <= 90 && n < 10) {
+                    break;
+                }
+            }
             current += n;
+            last_cardinal = n;
             found_any = true;
             consumed = i - start + 1;
             i += 1;
@@ -231,6 +235,7 @@ fn try_parse_number_sequence(words: &[&str], start: usize) -> Option<(String, us
                 current = if current == 0 { 1 } else { current };
                 current *= mult;
             }
+            last_cardinal = 0;
             consumed = i - start + 1;
             i += 1;
             if !trailing_punct(words[i - 1]).is_empty() {
@@ -314,8 +319,9 @@ mod tests {
     }
 
     #[test]
-    fn ordinal() {
-        assert_eq!(normalize("the third item"), "the 3rd item");
+    fn ordinal_not_converted_standalone() {
+        assert_eq!(normalize("do this first"), "do this first");
+        assert_eq!(normalize("the third item"), "the third item");
     }
 
     #[test]
@@ -381,7 +387,29 @@ mod tests {
     }
 
     #[test]
-    fn ordinal_with_trailing_punct() {
-        assert_eq!(normalize("the third, fourth, and fifth"), "the 3rd, 4th, and 5th");
+    fn ordinal_preserved_with_trailing_punct() {
+        assert_eq!(normalize("the third, fourth, and fifth"), "the third, fourth, and fifth");
+    }
+
+    #[test]
+    fn date_ordinal_still_works() {
+        assert_eq!(normalize("march third"), "March 3");
+    }
+
+    #[test]
+    fn year_not_summed() {
+        // "nineteen eighty nine" should NOT become 108 (19+80+9).
+        // "eighty nine" correctly compounds to 89, but "nineteen" stays separate.
+        assert_eq!(
+            normalize("first of may nineteen eighty nine"),
+            "first of May 19 89"
+        );
+    }
+
+    #[test]
+    fn consecutive_cardinals_not_summed() {
+        // Two separate numbers, not a compound
+        assert_eq!(normalize("five ten"), "5 10");
+        assert_eq!(normalize("twelve fifteen"), "12 15");
     }
 }

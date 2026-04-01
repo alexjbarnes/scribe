@@ -236,6 +236,19 @@ listen('transcription-result', () => {
   loadHistory();
 });
 
+document.getElementById('export-history').addEventListener('click', async () => {
+  const btn = document.getElementById('export-history');
+  try {
+    const json = await invoke('export_history');
+    await navigator.clipboard.writeText(json);
+    btn.textContent = 'Copied!';
+  } catch (err) {
+    console.error('Export failed:', err);
+    showToast('Export failed: ' + err);
+  }
+  setTimeout(() => { btn.textContent = 'Export'; }, 2000);
+});
+
 document.getElementById('clear-history').addEventListener('click', async () => {
   if (!confirm('Clear all history?')) return;
   try {

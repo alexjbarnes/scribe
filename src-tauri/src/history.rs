@@ -93,6 +93,13 @@ impl History {
         self.entries.lock().unwrap().clone()
     }
 
+    /// Export history as pretty-printed JSON string.
+    pub fn export(&self) -> Result<String, String> {
+        let entries = self.list();
+        serde_json::to_string_pretty(&entries)
+            .map_err(|e| format!("serialize: {e}"))
+    }
+
     pub fn clear(&self) {
         let mut entries = self.entries.lock().unwrap();
         entries.clear();

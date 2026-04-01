@@ -81,8 +81,18 @@ impl SpellCorrector {
 
         match suggestions.first() {
             Some(s) if s.distance > 0 => {
+                // If the word already exists in the dictionary (distance 0
+                // match), leave it alone. Only correct unknown words.
+                let exact = self.symspell.lookup(&lower, Verbosity::Top, 0);
+                if !exact.is_empty() {
+                    return token.to_string();
+                }
+                // Reject corrections that shorten the word (e.g. "repo" -> "rep").
+                // Real misspellings rarely produce shorter corrections.
+                if s.term.len() < lower.len() {
+                    return token.to_string();
+                }
                 log::debug!("Spelling: \"{}\" -> \"{}\" (distance={})", core, s.term, s.distance);
-                // Preserve original casing pattern
                 let corrected = transfer_case(core, &s.term);
                 format!("{leading}{corrected}{trailing}")
             }
@@ -223,6 +233,14 @@ mod tests {
         assert!(result.ends_with('.'), "got: {result}");
         let result = c.correct("is it working?");
         assert!(result.ends_with('?'), "got: {result}");
+    }
+
+    #[test]
+    fn preserves_valid_words() {
+        let c = corrector();
+        // "repo" is a valid word, should not be "corrected" to "rep"
+        let result = c.correct("the repo is clean");
+        assert!(result.contains("repo"), "repo mangled: {result}");
     }
 
     #[test]

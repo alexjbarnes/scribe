@@ -54,6 +54,11 @@ fn clear_history() {
     history::History::global().clear()
 }
 
+#[tauri::command]
+fn export_history() -> Result<String, String> {
+    history::History::global().export()
+}
+
 /// Start a short enrollment recording. Creates a temporary recorder and
 /// speaker verifier, records 5 seconds, extracts and persists the embedding.
 #[tauri::command]
@@ -433,6 +438,7 @@ pub fn run() {
             switch_model,
             list_history,
             clear_history,
+            export_history,
             enroll_speaker,
             clear_speaker_enrollment,
             get_speaker_enrollment_status,

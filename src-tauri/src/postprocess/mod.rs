@@ -2,11 +2,11 @@
 //!
 //! 1. Filler word removal (rule-based, ~1ms)
 //! 2. Inverse text normalization (rule-based, ~5ms)
-//! 3. Harper polish (Rust grammar rules, ~5-10ms)
+//! 3. Grammar correction (nlprule / LanguageTool, ~5-10ms)
 //! 4. SymSpell spell correction (edit-distance, <1ms)
 
 mod filler;
-mod harper;
+mod grammar;
 mod itn;
 mod spelling;
 
@@ -36,16 +36,20 @@ pub struct PipelineResult {
 }
 
 struct Pipeline {
-    harper: harper::HarperLinter,
+    grammar: grammar::GrammarChecker,
     spelling: spelling::SpellCorrector,
 }
 
 static PIPELINE: OnceLock<Pipeline> = OnceLock::new();
 
 fn get_pipeline() -> &'static Pipeline {
-    PIPELINE.get_or_init(|| Pipeline {
-        harper: harper::HarperLinter::new(),
-        spelling: spelling::SpellCorrector::new(),
+    PIPELINE.get_or_init(|| {
+        let grammar = grammar::GrammarChecker::new()
+            .expect("failed to load nlprule grammar checker");
+        Pipeline {
+            grammar,
+            spelling: spelling::SpellCorrector::new(),
+        }
     })
 }
 
@@ -107,16 +111,16 @@ pub fn postprocess(text: &str) -> PipelineResult {
         duration_ms: ms,
     });
 
-    // Stage 3: Harper polish
+    // Stage 3: Grammar correction (nlprule / LanguageTool rules)
     let pipeline = get_pipeline();
     let t = Instant::now();
     let prev = s.clone();
-    s = pipeline.harper.lint_and_fix(&s);
+    s = pipeline.grammar.correct(&s);
     let changed = s != prev;
     let ms = t.elapsed().as_millis() as u64;
-    log::debug!("Pipeline stage 3 (Harper): {ms}ms changed={changed}");
+    log::debug!("Pipeline stage 3 (Grammar): {ms}ms changed={changed}");
     stages.push(PipelineStage {
-        name: "Harper".to_string(),
+        name: "Grammar".to_string(),
         text: s.clone(),
         changed,
         duration_ms: ms,
