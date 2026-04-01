@@ -136,7 +136,7 @@ impl ModelManager {
         self.registry
             .iter()
             .map(|m| {
-                let (status, prog) = if *active == m.id {
+                let (status, prog) = if *active == m.id && self.is_downloaded(&m.id) {
                     ("active".into(), 1.0)
                 } else if let Some(&p) = progress.get(&m.id) {
                     ("downloading".into(), p)

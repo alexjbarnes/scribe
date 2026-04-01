@@ -137,7 +137,7 @@ async fn switch_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
                 return Ok(());
             }
             log::info!("Reloading model to {id_for_thread}");
-            let (_mid, model_engine) = mgr.first_downloaded_model()
+            let model_engine = mgr.model_engine(&id_for_thread)
                 .ok_or_else(|| format!("model {id_for_thread} not downloaded"))?;
             let t = transcribe::Transcriber::new(model_engine)?;
             eng.reload_model(t, id_for_thread.clone());
