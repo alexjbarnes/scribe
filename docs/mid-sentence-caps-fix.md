@@ -79,23 +79,24 @@ Both checks should be added before the acronym check.
 ### Medium-term: reconsider the approach
 
 `fix_mid_sentence_caps` is a blunt heuristic. The problem it solves (spurious
-mid-sentence caps from the model) is real, but the grammar stage already
-corrects many of these cases. Running a lowercasing pass after the grammar
-stage creates a second source of capitalisation decisions that can contradict
-the first.
+mid-sentence caps from the model) is real, but new failure cases will surface
+as the app is used with more varied vocabulary.
 
 Options worth evaluating:
 
 - **Trust the grammar stage** and remove `fix_mid_sentence_caps` entirely.
-  Risk: the grammar stage may not catch all of Parakeet's spurious caps.
+  Risk: nlprule does not flag spurious capitalisation as a grammar error, so
+  Parakeet's false caps ("What We Want") would pass through uncorrected.
 
-- **Run fix_mid_sentence_caps before the grammar stage** (after ITN, before
-  grammar). The grammar checker can then re-capitalise correctly where needed.
-  This preserves the original intent without fighting the grammar output.
+- **Run fix_mid_sentence_caps before the grammar stage** — this does NOT help.
+  nlprule is a grammar rule engine, not a proper noun or identifier database.
+  It would not re-capitalise tokens lowercased by our pass (e.g. "r2" would
+  stay "r2"). The grammar stage only preserved "R2" in the trace because it
+  had no rule to change it — not because it understood the token.
 
-- **Use a whitelist instead of a heuristic** — only lowercase a mid-sentence
-  word if it appears in a known false-cap list derived from observed model
-  behaviour.
+- **Expand the preserve list** — continue patching specific categories as
+  failures are observed (e.g. proper nouns that consistently appear in
+  dictation, version strings, product names).
 
 ## Test cases to add
 
