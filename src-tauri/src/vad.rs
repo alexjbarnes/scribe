@@ -94,13 +94,15 @@ impl Vad {
     }
 
     /// Flush any remaining speech at end of recording.
+    /// Prepends the prefill buffer just like `accept()` does, so the
+    /// transcriber gets pre-speech context even for short utterances.
     pub fn flush(&mut self) -> Option<Vec<f32>> {
         self.detector.flush();
         if self.detector.is_empty() {
             return None;
         }
 
-        let mut speech = Vec::new();
+        let mut speech = self.prefill.drain();
         while let Some(seg) = self.detector.front() {
             speech.extend_from_slice(seg.samples());
             self.detector.pop();

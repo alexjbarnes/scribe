@@ -428,6 +428,30 @@ fn record_loop(
         // Check for stop command
         match cmd_rx.try_recv() {
             Ok(Cmd::Stop) => {
+                // Drain any audio buffers still in the channel so we don't
+                // lose trailing consonants or word endings.
+                while let Ok(mono) = audio_rx.try_recv() {
+                    let resampled = match resampler {
+                        Some(ref mut r) => r.resample(&mono, false),
+                        None => mono,
+                    };
+                    match vad {
+                        Some(ref mut v) => {
+                            all_samples.extend_from_slice(&resampled);
+                            if let Some(segment) = v.accept(&resampled) {
+                                if let Some(ref tx) = segment_tx {
+                                    let _ = tx.send(segment);
+                                    segments_sent += 1;
+                                } else {
+                                    speech_samples.extend_from_slice(&segment);
+                                }
+                            }
+                        }
+                        None => {
+                            all_samples.extend_from_slice(&resampled);
+                        }
+                    }
+                }
                 exit_reason = LoopExit::UserStopped;
                 break;
             }

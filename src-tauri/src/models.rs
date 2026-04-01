@@ -231,15 +231,19 @@ impl ModelManager {
     }
 
     /// Backwards-compatible wrapper for code that only needs Parakeet paths.
+    /// Checks int8 variants first (smaller, faster on mobile).
     pub fn first_downloaded_parakeet(&self) -> Option<(String, (String, String, String, String))> {
-        for model in &self.registry {
-            if model.engine != "parakeet" || !self.is_downloaded(&model.id) {
-                continue;
-            }
+        let preferred = [
+            "parakeet-tdt-0.6b-v3-int8",
+            "parakeet-tdt-0.6b-v2-int8",
+            "parakeet-tdt-0.6b-v3",
+            "parakeet-tdt-0.6b-v2",
+        ];
+        for id in preferred {
             if let Some(crate::transcribe::ModelEngine::Transducer { encoder, decoder, joiner, tokens }) =
-                self.model_engine(&model.id)
+                self.model_engine(id)
             {
-                return Some((model.id.clone(), (encoder, decoder, joiner, tokens)));
+                return Some((id.to_string(), (encoder, decoder, joiner, tokens)));
             }
         }
         None

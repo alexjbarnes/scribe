@@ -115,7 +115,7 @@ pub struct PendingTranscription {
 impl PendingTranscription {
     /// Run the heavy work: wait for background segments, transcribe tail,
     /// join chunks, post-process, and record in history.
-    pub fn finalize(self) -> Option<TranscriptionResult> {
+    pub fn finalize(mut self) -> Option<TranscriptionResult> {
         let transcribe_start = std::time::Instant::now();
 
         let mut filtered_segments: u32 = 0;
@@ -146,7 +146,12 @@ impl PendingTranscription {
             filtered_audio_ms += tail_audio_ms;
         }
         if !self.samples.is_empty() && tail_audio_ms > 100 && tail_speaker_ok {
-            log::info!("Engine: transcribing tail ({:.1}s)", tail_audio_ms as f64 / 1000.0);
+            // Pad with 200ms of silence so the model sees a clean trailing
+            // boundary, matching the silence-bounded segments it was trained on.
+            const TAIL_PAD_SAMPLES: usize = 16_000 / 5; // 200ms at 16kHz
+            self.samples.extend(std::iter::repeat(0.0f32).take(TAIL_PAD_SAMPLES));
+
+            log::info!("Engine: transcribing tail ({:.1}s + 200ms pad)", tail_audio_ms as f64 / 1000.0);
             let t = std::time::Instant::now();
             match self.transcriber.transcribe(self.samples, 16_000) {
                 Ok(text) if !text.is_empty() => {
