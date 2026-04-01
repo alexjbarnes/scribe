@@ -74,9 +74,12 @@ pub fn with_mut<R>(f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
 }
 
 /// Destroy the engine, freeing all resources.
+/// Also resets INIT_CLAIMED so nativeInit can re-create the engine
+/// if the accessibility service outlives the app process.
 pub fn destroy() {
     let cell = engine_cell();
     *cell.lock().unwrap() = None;
+    INIT_CLAIMED.store(false, Ordering::SeqCst);
     log::info!("Engine: global singleton destroyed");
 }
 

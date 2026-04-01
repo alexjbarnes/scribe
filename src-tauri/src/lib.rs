@@ -125,28 +125,29 @@ fn get_speaker_enrollment_status() -> bool {
 }
 
 #[tauri::command]
-fn switch_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
+async fn switch_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
     models::ModelManager::global().set_active(&id)?;
     log::info!("Switched to model: {id}");
 
-    let app = app.clone();
-    let id = id.clone();
-    std::thread::spawn(move || {
+    let id_for_thread = id.clone();
+    tokio::task::spawn_blocking(move || {
         let mgr = models::ModelManager::global();
         engine::with_mut(|eng| {
-            if eng.model_id() != id {
-                log::info!("Reloading model to {id}");
+            if eng.model_id() != id_for_thread {
+                log::info!("Reloading model to {id_for_thread}");
                 if let Some((_mid, model_engine)) = mgr.first_downloaded_model() {
                     match transcribe::Transcriber::new(model_engine) {
-                        Ok(t) => eng.reload_model(t, id.clone()),
+                        Ok(t) => eng.reload_model(t, id_for_thread.clone()),
                         Err(e) => log::error!("Transcriber reload failed: {e}"),
                     }
                 }
             }
         });
-        let _ = app.emit("model-loaded", serde_json::json!({ "id": &id }));
-    });
+    })
+    .await
+    .map_err(|e| format!("model reload failed: {e}"))?;
 
+    let _ = app.emit("model-loaded", serde_json::json!({ "id": &id }));
     Ok(())
 }
 
