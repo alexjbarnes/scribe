@@ -51,6 +51,7 @@ class VerbaAccessibilityService : AccessibilityService() {
 
     @Volatile private var initialized = false
     @Volatile private var recording = false
+    @Volatile private var processing = false
     private val executor = Executors.newSingleThreadExecutor()
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -421,9 +422,13 @@ class VerbaAccessibilityService : AccessibilityService() {
     }
 
     private fun onMicClick() {
-        logI("onMicClick: initialized=$initialized recording=$recording")
+        logI("onMicClick: initialized=$initialized recording=$recording processing=$processing")
         if (!initialized) {
             toast("Verba: model still loading...")
+            return
+        }
+        if (processing) {
+            logD("onMicClick: ignoring, transcription in progress")
             return
         }
 
@@ -495,6 +500,7 @@ class VerbaAccessibilityService : AccessibilityService() {
     private fun stopAndTranscribe() {
         logI("stopAndTranscribe")
         recording = false
+        processing = true
         hapticFeedback()
         showProcessingRing()
 
@@ -502,6 +508,7 @@ class VerbaAccessibilityService : AccessibilityService() {
             val text = nativeStopAndTranscribe()
             logI("nativeStopAndTranscribe returned ${text?.length ?: 0} chars")
             mainHandler.post {
+                processing = false
                 if (!text.isNullOrEmpty()) {
                     logI("injecting text: \"${text.take(80)}\"")
                     flashCompleteRing()
