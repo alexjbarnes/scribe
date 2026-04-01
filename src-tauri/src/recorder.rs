@@ -126,7 +126,7 @@ impl AudioRecorder {
             .name("audio-recorder".into())
             .spawn(move || {
                 let vad = match vad_path {
-                    Some(ref path) => match Vad::new(path, 500) {
+                    Some(ref path) => match Vad::new(path) {
                         Ok(v) => {
                             let _ = ready_tx.send(Ok(()));
                             Some(v)
