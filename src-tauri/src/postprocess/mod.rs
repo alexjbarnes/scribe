@@ -210,6 +210,11 @@ fn final_cleanup(text: &str) -> String {
         s = s.replace("  ", " ");
     }
 
+    // Fix false mid-sentence capitalization from the model.
+    // Lowercase words that are capitalized but don't follow sentence-ending
+    // punctuation and aren't acronyms or "I".
+    s = fix_mid_sentence_caps(&s);
+
     // Capitalize first character
     let mut chars = s.chars();
     if let Some(first) = chars.next() {
@@ -225,6 +230,71 @@ fn final_cleanup(text: &str) -> String {
     }
 
     s
+}
+
+/// Lowercase words that the model falsely capitalized mid-sentence.
+/// Preserves capitalization after sentence-ending punctuation, for acronyms
+/// (all caps, 2+ chars), and for "I".
+fn fix_mid_sentence_caps(text: &str) -> String {
+    let words: Vec<&str> = text.split(' ').collect();
+    if words.len() <= 1 {
+        return text.to_string();
+    }
+
+    let mut result = Vec::with_capacity(words.len());
+    result.push(words[0].to_string());
+
+    for i in 1..words.len() {
+        let word = words[i];
+        let prev = words[i - 1];
+
+        // Check if previous word ends with sentence-ending punctuation
+        let after_sentence_end = prev.ends_with('.') || prev.ends_with('!') || prev.ends_with('?');
+
+        if after_sentence_end {
+            result.push(word.to_string());
+            continue;
+        }
+
+        // Strip leading punctuation to examine the core word
+        let core_start = word.find(|c: char| !c.is_ascii_punctuation()).unwrap_or(word.len());
+        let prefix = &word[..core_start];
+        let rest = &word[core_start..];
+
+        if rest.is_empty() {
+            result.push(word.to_string());
+            continue;
+        }
+
+        let first_char = rest.chars().next().unwrap();
+        if !first_char.is_uppercase() {
+            result.push(word.to_string());
+            continue;
+        }
+
+        // Find where the alphabetic part ends (core word without trailing punct)
+        let alpha_end = rest.find(|c: char| !c.is_alphabetic() && c != '\'').unwrap_or(rest.len());
+        let core = &rest[..alpha_end];
+
+        // Preserve "I" standalone
+        if core == "I" {
+            result.push(word.to_string());
+            continue;
+        }
+
+        // Preserve acronyms (all uppercase, 2+ chars): API, DNS, USA
+        if core.len() >= 2 && core.chars().all(|c| c.is_uppercase()) {
+            result.push(word.to_string());
+            continue;
+        }
+
+        // Lowercase the first character
+        let lowered_first: String = first_char.to_lowercase().collect();
+        let fixed = format!("{prefix}{lowered_first}{}", &rest[first_char.len_utf8()..]);
+        result.push(fixed);
+    }
+
+    result.join(" ")
 }
 
 #[cfg(test)]
@@ -313,5 +383,65 @@ mod tests {
     fn join_chunks_three_chunks_mixed() {
         let chunks = vec!["First sentence.", "but continues here.", "New sentence."];
         assert_eq!(join_chunks(&chunks), "First sentence but continues here. New sentence.");
+    }
+
+    #[test]
+    fn fix_caps_lowercases_mid_sentence() {
+        assert_eq!(fix_mid_sentence_caps("assert what We want"), "assert what we want");
+    }
+
+    #[test]
+    fn fix_caps_preserves_after_period() {
+        assert_eq!(fix_mid_sentence_caps("Hello. World is great."), "Hello. World is great.");
+    }
+
+    #[test]
+    fn fix_caps_preserves_after_exclamation() {
+        assert_eq!(fix_mid_sentence_caps("Stop! That hurts."), "Stop! That hurts.");
+    }
+
+    #[test]
+    fn fix_caps_preserves_after_question() {
+        assert_eq!(fix_mid_sentence_caps("Really? That works."), "Really? That works.");
+    }
+
+    #[test]
+    fn fix_caps_preserves_acronyms() {
+        assert_eq!(fix_mid_sentence_caps("the API is working"), "the API is working");
+        assert_eq!(fix_mid_sentence_caps("use DNS for that"), "use DNS for that");
+    }
+
+    #[test]
+    fn fix_caps_preserves_i() {
+        assert_eq!(fix_mid_sentence_caps("then I went home"), "then I went home");
+    }
+
+    #[test]
+    fn fix_caps_preserves_first_word() {
+        assert_eq!(fix_mid_sentence_caps("Hello world"), "Hello world");
+    }
+
+    #[test]
+    fn fix_caps_multiple_false_caps() {
+        assert_eq!(
+            fix_mid_sentence_caps("this Is Really Bad"),
+            "this is really bad"
+        );
+    }
+
+    #[test]
+    fn fix_caps_mixed_real_and_false() {
+        assert_eq!(
+            fix_mid_sentence_caps("That works. And Then We left."),
+            "That works. And then we left."
+        );
+    }
+
+    #[test]
+    fn final_cleanup_fixes_mid_sentence_caps() {
+        assert_eq!(
+            final_cleanup("assert what We want out the other side"),
+            "Assert what we want out the other side."
+        );
     }
 }
