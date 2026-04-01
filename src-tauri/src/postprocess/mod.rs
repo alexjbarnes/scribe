@@ -276,8 +276,14 @@ fn fix_mid_sentence_caps(text: &str) -> String {
         let alpha_end = rest.find(|c: char| !c.is_alphabetic() && c != '\'').unwrap_or(rest.len());
         let core = &rest[..alpha_end];
 
-        // Preserve "I" standalone
-        if core == "I" {
+        // Preserve "I" and contractions: I've, I'd, I'll, I'm
+        if core == "I" || rest.starts_with("I'") {
+            result.push(word.to_string());
+            continue;
+        }
+
+        // Preserve tokens containing digits: R2, v3, C4, H2O, INT8
+        if rest.chars().any(|c| c.is_ascii_digit()) {
             result.push(word.to_string());
             continue;
         }
@@ -414,6 +420,21 @@ mod tests {
     #[test]
     fn fix_caps_preserves_i() {
         assert_eq!(fix_mid_sentence_caps("then I went home"), "then I went home");
+    }
+
+    #[test]
+    fn fix_caps_preserves_i_contractions() {
+        assert_eq!(fix_mid_sentence_caps("once I've settled the bucket"), "once I've settled the bucket");
+        assert_eq!(fix_mid_sentence_caps("then I'd like to check"), "then I'd like to check");
+        assert_eq!(fix_mid_sentence_caps("because I'll be there"), "because I'll be there");
+        assert_eq!(fix_mid_sentence_caps("now I'm ready"), "now I'm ready");
+    }
+
+    #[test]
+    fn fix_caps_preserves_alphanumeric_tokens() {
+        assert_eq!(fix_mid_sentence_caps("settled the R2 bucket"), "settled the R2 bucket");
+        assert_eq!(fix_mid_sentence_caps("connect to the C4 instance"), "connect to the C4 instance");
+        assert_eq!(fix_mid_sentence_caps("check INT8 performance"), "check INT8 performance");
     }
 
     #[test]
