@@ -149,12 +149,19 @@ function renderPipelineStages(stages, chunkTimings) {
       const dim = unchanged ? ' opacity-40' : '';
       const tag = unchanged ? ' (no change)' : '';
       const timing = stage.duration_ms ? ` ${stage.duration_ms}ms` : '';
+      let colaHtml = '';
+      if (stage.cola_score != null) {
+        const pct = Math.round(stage.cola_score * 100);
+        const routed = stage.cola_score < 0.75;
+        const color = routed ? '#f87171' : '#4ade80';
+        colaHtml = ` <span style="color:${color};font-variant-numeric:tabular-nums">CoLA ${pct}%${routed ? ' → corrected' : ''}</span>`;
+      }
       const textHtml = (!isBaseline && stage.changed)
         ? renderDiffHtml(stages[idx - 1].text, stage.text)
         : escapeHtml(stage.text);
       html += `
         <div class="${dim}">
-          <span class="text-[10px] font-semibold uppercase tracking-wider text-primary/70">${escapeHtml(stage.name)}${tag}${timing}</span>
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-primary/70">${escapeHtml(stage.name)}${tag}${timing}${colaHtml}</span>
           <p class="text-xs text-on-surface-variant leading-relaxed mt-0.5 select-text">${textHtml}</p>
         </div>`;
     }

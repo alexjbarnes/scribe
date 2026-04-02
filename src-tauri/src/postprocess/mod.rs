@@ -27,6 +27,10 @@ pub struct PipelineStage {
     pub changed: bool,
     #[serde(default)]
     pub duration_ms: u64,
+    /// CoLA acceptability score [0,1] from the neural grammar router.
+    /// Only present when the neural path ran (grammar_neural_bundled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cola_score: Option<f32>,
 }
 
 /// Result of the post-processing pipeline with intermediate stage snapshots.
@@ -84,6 +88,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         text: s.clone(),
         changed: false,
         duration_ms: 0,
+        cola_score: None,
     });
 
     // Stage 1: Filler word removal
@@ -98,6 +103,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         text: s.clone(),
         changed,
         duration_ms: ms,
+        cola_score: None,
     });
 
     // Stage 2: Inverse text normalization
@@ -112,6 +118,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         text: s.clone(),
         changed,
         duration_ms: ms,
+        cola_score: None,
     });
 
     // Stage 3: User vocab substitution
@@ -126,6 +133,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         text: s.clone(),
         changed,
         duration_ms: ms,
+        cola_score: None,
     });
 
     // Stage 4: Grammar correction.
@@ -145,6 +153,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
     let t = Instant::now();
     let prev = s.clone();
     let grammar_label;
+    let mut cola_score: Option<f32> = None;
     let word_count = s.split_whitespace().count();
     if word_count < MIN_GRAMMAR_WORDS {
         log::debug!("Pipeline stage 4: grammar skipped ({word_count} words < {MIN_GRAMMAR_WORDS})");
@@ -152,22 +161,24 @@ pub fn postprocess(text: &str) -> PipelineResult {
     } else {
         let grammar_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Some(neural) = grammar_neural::global() {
-                let corrected = if neural.needs_correction(&s) {
+                let (needs_correction, score) = neural.route(&s);
+                let corrected = if needs_correction {
                     neural.correct(&s)
                 } else {
                     s.clone()
                 };
-                (corrected, "Grammar (neural)")
+                (corrected, "Grammar (neural)", score)
             } else {
                 let pipeline = get_pipeline();
                 let corrected = pipeline.grammar.correct(&s);
-                (corrected, "Grammar (nlprule)")
+                (corrected, "Grammar (nlprule)", None)
             }
         }));
         match grammar_result {
-            Ok((corrected, label)) => {
+            Ok((corrected, label, score)) => {
                 s = corrected;
                 grammar_label = label;
+                cola_score = score;
             }
             Err(payload) => {
                 let msg = payload
@@ -188,6 +199,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         text: s.clone(),
         changed,
         duration_ms: ms,
+        cola_score,
     });
 
     // Stage 4: Spell correction (disabled — SymSpell corrupts proper nouns and
@@ -217,6 +229,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         text: s.clone(),
         changed,
         duration_ms: ms,
+        cola_score: None,
     });
 
     let total_ms = total_start.elapsed().as_millis() as u64;

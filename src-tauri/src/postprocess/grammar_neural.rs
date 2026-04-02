@@ -122,16 +122,16 @@ mod bundled {
             })
         }
 
-        /// Returns true if the sentence should be sent to the corrector.
-        pub fn needs_correction(&self, text: &str) -> bool {
+        /// Returns (needs_correction, score). Score is None on error.
+        pub fn route(&self, text: &str) -> (bool, Option<f32>) {
             match self.p_acceptable(text) {
                 Ok(p) => {
                     log::debug!("CoLA p(acceptable)={p:.3} threshold={COLA_THRESHOLD}");
-                    p < COLA_THRESHOLD
+                    (p < COLA_THRESHOLD, Some(p))
                 }
                 Err(e) => {
                     log::warn!("CoLA router error: {e}");
-                    false
+                    (false, None)
                 }
             }
         }
