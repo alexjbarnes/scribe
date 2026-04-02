@@ -1,8 +1,12 @@
 package com.alexb151.verba
 
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Bundle
@@ -76,6 +80,15 @@ class VerbaAccessibilityService : AccessibilityService() {
     // Saved position
     private var savedX = -1
     private var savedY = -1
+
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            when (intent.action) {
+                Intent.ACTION_SCREEN_OFF -> hideOverlay()
+                Intent.ACTION_USER_PRESENT -> if (focusedNode != null) showOverlay()
+            }
+        }
+    }
     private val prefs: SharedPreferences by lazy {
         getSharedPreferences("verba_overlay", MODE_PRIVATE)
     }
@@ -92,17 +105,17 @@ class VerbaAccessibilityService : AccessibilityService() {
             initialized = nativeInit(dataDir)
             if (initialized) {
                 logI("nativeInit succeeded, preloading model")
-                mainHandler.post { toast("Verba: loading model...") }
+                mainHandler.post { toast("Loading model...") }
                 nativePreloadModel()
                 logI("model preloaded")
                 mainHandler.post {
-                    toast("Verba: ready")
+                    toast("Model ready")
                     micButton?.alpha = 1.0f
                 }
             } else {
                 logE("nativeInit failed")
                 mainHandler.post {
-                    toast("Verba: no model found. Open the app to download one.")
+                    toast("No model found. Open the app to download one.")
                     micButton?.alpha = 0.4f
                 }
             }
@@ -113,6 +126,11 @@ class VerbaAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         logI("onServiceConnected")
         createOverlay()
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
+        registerReceiver(screenReceiver, filter)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -424,7 +442,7 @@ class VerbaAccessibilityService : AccessibilityService() {
     private fun onMicClick() {
         logI("onMicClick: initialized=$initialized recording=$recording processing=$processing")
         if (!initialized) {
-            toast("Verba: model still loading...")
+            toast("Model still loading...")
             return
         }
         if (processing) {
@@ -491,7 +509,7 @@ class VerbaAccessibilityService : AccessibilityService() {
                 mainHandler.post {
                     recording = false
                     hideRing()
-                    toast("Verba: failed to start recording")
+                    toast("Failed to start recording")
                 }
             }
         }
@@ -516,7 +534,7 @@ class VerbaAccessibilityService : AccessibilityService() {
                 } else {
                     logW("no text returned from transcription")
                     hideRing()
-                    toast("Verba: no speech detected")
+                    toast("No speech detected")
                 }
             }
         }
@@ -528,7 +546,7 @@ class VerbaAccessibilityService : AccessibilityService() {
         if (node == null) {
             logW("injectText: no focused node found, copying to clipboard")
             copyToClipboard(text)
-            toast("Verba: copied to clipboard (no text field focused)")
+            toast("Copied to clipboard (no text field focused)")
             return
         }
         logD("injectText: node=${node.className} editable=${node.isEditable} fromLive=${liveFocus != null}")
@@ -584,11 +602,11 @@ class VerbaAccessibilityService : AccessibilityService() {
             if (pasted) return
             logW("injectText: ACTION_PASTE also failed")
             copyToClipboard(adjusted)
-            toast("Verba: copied to clipboard (paste failed)")
+            toast("Copied to clipboard (paste failed)")
         } catch (e: Exception) {
             logE("injectText: ACTION_PASTE threw: $e")
             copyToClipboard(adjusted)
-            toast("Verba: copied to clipboard")
+            toast("Copied to clipboard")
         }
     }
 
@@ -761,6 +779,7 @@ class VerbaAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         logI("onDestroy")
+        try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         if (isOverlayShowing && overlayView != null) {
             try { windowManager?.removeView(overlayView) } catch (_: Exception) {}
         }
