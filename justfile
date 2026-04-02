@@ -57,8 +57,9 @@ _setup-sherpa-desktop:
         exit 0
     fi
 
-    VERSION="{{sherpa_version}}"
-    BASE_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${VERSION}"
+    SHERPA_VERSION="{{sherpa_version}}"
+    # ORT version must match what sherpa-onnx was built against
+    ORT_VERSION="1.23.2"
     CACHE="{{desktop_deps}}/cache"
     mkdir -p "$CACHE" "$LIB_DIR"
 
@@ -66,49 +67,57 @@ _setup-sherpa-desktop:
     ARCH=$(uname -m)
     OS=$(uname -s)
     if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
-        STATIC_ARCHIVE="sherpa-onnx-v${VERSION}-osx-arm64-static-lib.tar.bz2"
-        SHARED_ARCHIVE="sherpa-onnx-v${VERSION}-osx-arm64-shared-lib.tar.bz2"
+        STATIC_ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-osx-arm64-static-lib.tar.bz2"
+        ORT_ARCHIVE="onnxruntime-osx-arm64-${ORT_VERSION}.tgz"
+        ORT_LIBNAME="libonnxruntime.${ORT_VERSION}.dylib"
+        ORT_LINK="libonnxruntime.dylib"
     elif [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ]; then
-        STATIC_ARCHIVE="sherpa-onnx-v${VERSION}-osx-x64-static-lib.tar.bz2"
-        SHARED_ARCHIVE="sherpa-onnx-v${VERSION}-osx-x64-shared-lib.tar.bz2"
+        STATIC_ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-osx-x64-static-lib.tar.bz2"
+        ORT_ARCHIVE="onnxruntime-osx-x86_64-${ORT_VERSION}.tgz"
+        ORT_LIBNAME="libonnxruntime.${ORT_VERSION}.dylib"
+        ORT_LINK="libonnxruntime.dylib"
     elif [ "$OS" = "Linux" ] && [ "$ARCH" = "x86_64" ]; then
-        STATIC_ARCHIVE="sherpa-onnx-v${VERSION}-linux-x64-static-lib.tar.bz2"
-        SHARED_ARCHIVE="sherpa-onnx-v${VERSION}-linux-x64-shared-lib.tar.bz2"
+        STATIC_ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-linux-x64-static-lib.tar.bz2"
+        ORT_ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+        ORT_LIBNAME="libonnxruntime.so.${ORT_VERSION}"
+        ORT_LINK="libonnxruntime.so"
     elif [ "$OS" = "Linux" ] && [ "$ARCH" = "aarch64" ]; then
-        STATIC_ARCHIVE="sherpa-onnx-v${VERSION}-linux-aarch64-static-lib.tar.bz2"
-        SHARED_ARCHIVE="sherpa-onnx-v${VERSION}-linux-aarch64-shared-cpu-lib.tar.bz2"
+        STATIC_ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-linux-aarch64-static-lib.tar.bz2"
+        ORT_ARCHIVE="onnxruntime-linux-aarch64-${ORT_VERSION}.tgz"
+        ORT_LIBNAME="libonnxruntime.so.${ORT_VERSION}"
+        ORT_LINK="libonnxruntime.so"
     else
         echo "ERROR: Unsupported platform: $OS $ARCH"
         exit 1
     fi
 
-    # Download static archive (all .a files)
+    SHERPA_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}"
+    ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
+
+    # Download sherpa-onnx static archive (all .a files)
     if [ ! -f "$CACHE/$STATIC_ARCHIVE" ]; then
         echo "==> Downloading sherpa-onnx static libs..."
-        curl -fSL "$BASE_URL/$STATIC_ARCHIVE" -o "$CACHE/$STATIC_ARCHIVE"
+        curl -fSL "$SHERPA_URL/$STATIC_ARCHIVE" -o "$CACHE/$STATIC_ARCHIVE"
     fi
 
-    # Download shared archive (libonnxruntime.dylib/.so)
-    if [ ! -f "$CACHE/$SHARED_ARCHIVE" ]; then
-        echo "==> Downloading sherpa-onnx shared libs (for libonnxruntime)..."
-        curl -fSL "$BASE_URL/$SHARED_ARCHIVE" -o "$CACHE/$SHARED_ARCHIVE"
+    # Download ORT shared library from Microsoft
+    if [ ! -f "$CACHE/$ORT_ARCHIVE" ]; then
+        echo "==> Downloading ONNX Runtime ${ORT_VERSION}..."
+        curl -fSL "$ORT_URL/$ORT_ARCHIVE" -o "$CACHE/$ORT_ARCHIVE"
     fi
 
     # Extract static libs
-    echo "==> Extracting static libs..."
+    echo "==> Extracting sherpa-onnx static libs..."
     STATIC_STEM="${STATIC_ARCHIVE%.tar.bz2}"
     tar -xjf "$CACHE/$STATIC_ARCHIVE" -C "$CACHE"
     cp "$CACHE/$STATIC_STEM/lib/"*.a "$LIB_DIR/"
 
-    # Extract shared ORT dylib
-    echo "==> Extracting shared libonnxruntime..."
-    SHARED_STEM="${SHARED_ARCHIVE%.tar.bz2}"
-    tar -xjf "$CACHE/$SHARED_ARCHIVE" -C "$CACHE"
-    if [ "$OS" = "Darwin" ]; then
-        cp "$CACHE/$SHARED_STEM/lib/libonnxruntime"*.dylib "$LIB_DIR/"
-    else
-        cp "$CACHE/$SHARED_STEM/lib/libonnxruntime"*.so* "$LIB_DIR/"
-    fi
+    # Extract ORT dylib
+    echo "==> Extracting libonnxruntime..."
+    ORT_STEM="${ORT_ARCHIVE%.tgz}"
+    tar -xzf "$CACHE/$ORT_ARCHIVE" -C "$CACHE"
+    cp "$CACHE/$ORT_STEM/lib/$ORT_LIBNAME" "$LIB_DIR/"
+    ln -sf "$ORT_LIBNAME" "$LIB_DIR/$ORT_LINK"
 
     # Replace libonnxruntime.a with an empty stub archive.
     # sherpa-onnx-sys emits `static=onnxruntime` which expects this file,
