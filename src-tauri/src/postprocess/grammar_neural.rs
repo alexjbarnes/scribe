@@ -18,6 +18,14 @@
 //!   python scripts/export_cola_onnx.py --output-dir src-tauri/data/grammar/
 //!   python scripts/download_t5_grammar_onnx.py --output-dir src-tauri/data/grammar/
 
+/// Per-sentence routing and correction result, stored in pipeline history.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SentenceResult {
+    pub text: String,
+    pub score: Option<f32>,
+    pub corrected: bool,
+}
+
 #[cfg(grammar_neural_bundled)]
 mod bundled {
     use std::sync::{Mutex, OnceLock};
@@ -128,32 +136,28 @@ mod bundled {
             })
         }
 
-        /// Route and correct text. Returns (corrected, min_router_score).
+        /// Route and correct text. Returns (corrected_text, per_sentence_results).
         /// For long texts, routes and corrects each sentence independently so
         /// T5 only runs on sentences that actually need it.
-        pub fn apply(&self, text: &str) -> (String, Option<f32>) {
+        pub fn apply(&self, text: &str) -> (String, Vec<super::SentenceResult>) {
             if text.split_whitespace().count() > SENTENCE_SPLIT_THRESHOLD {
                 let sentences = Self::split_sentences(text);
                 if sentences.len() > 1 {
                     let mut parts: Vec<String> = Vec::with_capacity(sentences.len());
-                    let mut min_score: Option<f32> = None;
+                    let mut results: Vec<super::SentenceResult> = Vec::with_capacity(sentences.len());
                     for s in &sentences {
                         let (needs_correction, score) = self.route(s.as_str());
-                        if let Some(p) = score {
-                            min_score = Some(min_score.map_or(p, |m: f32| m.min(p)));
-                        }
-                        if needs_correction {
-                            parts.push(self.correct(s.as_str()));
-                        } else {
-                            parts.push(s.clone());
-                        }
+                        let out = if needs_correction { self.correct(s.as_str()) } else { s.clone() };
+                        parts.push(out.clone());
+                        results.push(super::SentenceResult { text: out, score, corrected: needs_correction });
                     }
-                    return (parts.join(" "), min_score);
+                    return (parts.join(" "), results);
                 }
             }
             let (needs_correction, score) = self.route(text);
             let corrected = if needs_correction { self.correct(text) } else { text.to_string() };
-            (corrected, score)
+            let results = vec![super::SentenceResult { text: corrected.clone(), score, corrected: needs_correction }];
+            (corrected, results)
         }
 
         /// Returns (needs_correction, score). Score is None on error.
@@ -372,8 +376,9 @@ pub struct GrammarNeuralChecker;
 
 #[cfg(not(grammar_neural_bundled))]
 impl GrammarNeuralChecker {
-    pub fn needs_correction(&self, _text: &str) -> bool { false }
-    pub fn correct(&self, text: &str) -> String { text.to_string() }
+    pub fn apply(&self, text: &str) -> (String, Vec<SentenceResult>) {
+        (text.to_string(), vec![])
+    }
 }
 
 #[cfg(not(grammar_neural_bundled))]

@@ -159,10 +159,24 @@ function renderPipelineStages(stages, chunkTimings) {
       const textHtml = (!isBaseline && stage.changed)
         ? renderDiffHtml(stages[idx - 1].text, stage.text)
         : escapeHtml(stage.text);
+      let sentencesHtml = '';
+      if (stage.grammar_sentences && stage.grammar_sentences.length > 1) {
+        sentencesHtml = '<div class="mt-1 mb-0.5 space-y-0.5 pl-2 border-l-2 border-outline-variant/30">';
+        for (const sent of stage.grammar_sentences) {
+          const p = sent.score != null ? Math.round(sent.score * 100) : null;
+          const scoreStr = p != null
+            ? `<span style="color:${p < 75 ? '#f87171' : '#4ade80'};font-variant-numeric:tabular-nums">${p}%</span> `
+            : '';
+          const action = sent.corrected ? '<span style="color:#f87171">corrected</span>' : '<span style="color:#4ade80">passed</span>';
+          const preview = sent.text.length > 70 ? sent.text.slice(0, 67) + '…' : sent.text;
+          sentencesHtml += `<p class="text-[10px] text-on-surface-variant font-mono leading-relaxed">${scoreStr}${action} — ${escapeHtml(preview)}</p>`;
+        }
+        sentencesHtml += '</div>';
+      }
       html += `
         <div class="${dim}">
           <span class="text-[10px] font-semibold uppercase tracking-wider text-primary/70">${escapeHtml(stage.name)}${tag}${timing}${colaHtml}</span>
-          <p class="text-xs text-on-surface-variant leading-relaxed mt-0.5 select-text">${textHtml}</p>
+          ${sentencesHtml}<p class="text-xs text-on-surface-variant leading-relaxed mt-0.5 select-text">${textHtml}</p>
         </div>`;
     }
   }

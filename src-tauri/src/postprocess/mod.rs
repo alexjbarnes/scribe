@@ -31,6 +31,10 @@ pub struct PipelineStage {
     /// neural path ran. Below the routing threshold → correction was applied.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grammar_score: Option<f32>,
+    /// Per-sentence routing and correction detail. Populated by the neural
+    /// path when the input contained multiple sentences.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grammar_sentences: Vec<grammar_neural::SentenceResult>,
 }
 
 /// Result of the post-processing pipeline with intermediate stage snapshots.
@@ -89,6 +93,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         changed: false,
         duration_ms: 0,
         grammar_score: None,
+        grammar_sentences: vec![],
     });
 
     // Stage 1: Filler word removal
@@ -104,6 +109,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         changed,
         duration_ms: ms,
         grammar_score: None,
+        grammar_sentences: vec![],
     });
 
     // Stage 2: Inverse text normalization
@@ -119,6 +125,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         changed,
         duration_ms: ms,
         grammar_score: None,
+        grammar_sentences: vec![],
     });
 
     // Stage 3: User vocab substitution
@@ -134,6 +141,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         changed,
         duration_ms: ms,
         grammar_score: None,
+        grammar_sentences: vec![],
     });
 
     // Stage 4: Grammar correction.
@@ -155,6 +163,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
     let prev = s.clone();
     let grammar_label;
     let mut grammar_score: Option<f32> = None;
+    let mut grammar_sentences: Vec<grammar_neural::SentenceResult> = vec![];
     let word_count = s.split_whitespace().count();
     if word_count < MIN_GRAMMAR_WORDS {
         log::debug!("Pipeline stage 4: grammar skipped ({word_count} words < {MIN_GRAMMAR_WORDS})");
@@ -162,19 +171,21 @@ pub fn postprocess(text: &str) -> PipelineResult {
     } else {
         let grammar_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Some(neural) = grammar_neural::global() {
-                let (corrected, score) = neural.apply(&s);
-                (corrected, "Grammar (neural)", score)
+                let (corrected, results) = neural.apply(&s);
+                let min_score = results.iter().filter_map(|r| r.score).reduce(f32::min);
+                (corrected, "Grammar (neural)", min_score, results)
             } else {
                 let pipeline = get_pipeline();
                 let corrected = pipeline.grammar.correct(&s);
-                (corrected, "Grammar (nlprule)", None)
+                (corrected, "Grammar (nlprule)", None, vec![])
             }
         }));
         match grammar_result {
-            Ok((corrected, label, score)) => {
+            Ok((corrected, label, score, sentences)) => {
                 s = corrected;
                 grammar_label = label;
                 grammar_score = score;
+                grammar_sentences = sentences;
             }
             Err(payload) => {
                 let msg = payload
@@ -196,6 +207,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         changed,
         duration_ms: ms,
         grammar_score,
+        grammar_sentences,
     });
 
     // Stage 4: Spell correction (disabled — SymSpell corrupts proper nouns and
@@ -226,6 +238,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
         changed,
         duration_ms: ms,
         grammar_score: None,
+        grammar_sentences: vec![],
     });
 
     let total_ms = total_start.elapsed().as_millis() as u64;
