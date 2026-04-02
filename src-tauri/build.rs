@@ -1,6 +1,26 @@
 fn main() {
     tauri_build::build();
 
+    // Detect bundled grammar model files and emit cfg flag so grammar_neural.rs
+    // can use include_bytes! conditionally. If files are absent the feature
+    // compiles out and the pipeline falls back to nlprule at runtime.
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    let grammar_dir = std::path::Path::new(&manifest_dir).join("data/grammar");
+    let grammar_files = [
+        "cola_model_quantized.onnx",
+        "cola_tokenizer.json",
+        "encoder_model_quantized.onnx",
+        "decoder_model_quantized.onnx",
+        "t5_tokenizer.json",
+    ];
+    let grammar_bundled = grammar_files.iter().all(|f| grammar_dir.join(f).exists());
+    if grammar_bundled {
+        println!("cargo:rustc-cfg=grammar_neural_bundled");
+    }
+    for f in &grammar_files {
+        println!("cargo:rerun-if-changed=data/grammar/{f}");
+    }
+
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "android" {
         // sherpa-onnx / ONNX Runtime C++ code requires the C++ runtime.
