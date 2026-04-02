@@ -306,7 +306,12 @@ pub fn run() {
                 return Ok(());
             }
             history::History::init_global();
-            postprocess::grammar_neural::init_global();
+            // Load neural grammar models on a background thread so the UI
+            // stays responsive during startup.
+            std::thread::Builder::new()
+                .name("grammar-init".into())
+                .spawn(|| postprocess::grammar_neural::init_global())
+                .ok();
 
             debug_log::set_app_handle(app.handle().clone());
 

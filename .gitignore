@@ -26,8 +26,9 @@ dist-ssr
 # Test model files (large, downloaded separately)
 test_models/
 
-# Android build cache (sherpa-onnx native libs)
+# Native build caches (sherpa-onnx libs, ORT dylib)
 .android-deps/
+.desktop-deps/
 
 # Signed APK artifacts
 *.apk

@@ -20,6 +20,32 @@ fn main() {
         println!("cargo:rerun-if-changed=data/grammar/{f}");
     }
 
+    // Desktop shared-ORT setup (mirrors Android pattern).
+    // When SHERPA_ONNX_LIB_DIR contains a .shared-ort marker, the directory
+    // has static sherpa-onnx libs + a stub libonnxruntime.a + the real
+    // libonnxruntime.dylib.  sherpa-onnx-sys emits `static=onnxruntime`
+    // (satisfied by the stub); we add `dylib=onnxruntime` so the real ORT
+    // is loaded as a shared library.  The ort crate's dlopen then finds
+    // the already-loaded library — single ORT instance, same as Android.
+    if target_os != "android" {
+        if let Ok(lib_dir) = std::env::var("SHERPA_ONNX_LIB_DIR") {
+            let lib_path = std::path::Path::new(&lib_dir);
+            if lib_path.join(".shared-ort").exists() {
+                println!("cargo:rustc-link-lib=dylib=onnxruntime");
+
+                // Set rpath so the binary finds the dylib at runtime
+                if target_os == "macos" {
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,{lib_dir}");
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,@loader_path");
+                } else {
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,{lib_dir}");
+                    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
+                }
+            }
+        }
+        println!("cargo:rerun-if-env-changed=SHERPA_ONNX_LIB_DIR");
+    }
+
     if target_os == "android" {
         // sherpa-onnx / ONNX Runtime C++ code requires the C++ runtime.
         // Force the linker to record libc++_shared.so as a NEEDED dependency

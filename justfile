@@ -1,7 +1,8 @@
 # Verba build automation
 #
 # Usage:
-#   just setup         # first-time desktop setup: grammar models
+#   just setup         # first-time desktop setup: shared-ORT libs + grammar models
+#   just dev           # run desktop dev server (sets SHERPA_ONNX_LIB_DIR)
 #   just setup-android # first-time Android setup: sherpa-onnx, ORT, grammar models
 #   just apk           # build debug APK
 #   just apk-release   # build release APK
@@ -16,6 +17,10 @@ tauri_dir    := repo_root / "src-tauri"
 android_dir  := tauri_dir / "gen" / "android"
 jni_dir      := android_dir / "app" / "src" / "main" / "jniLibs"
 keystore     := repo_root / "debug.keystore"
+desktop_deps := repo_root / ".desktop-deps"
+
+# sherpa-onnx version must match Cargo.toml's sherpa-onnx dependency
+sherpa_version := "1.12.34"
 
 # Auto-detect paths
 android_home := env("ANDROID_HOME", `echo ${HOME}/Android/Sdk`)
@@ -26,13 +31,105 @@ strip_bin    := android_ndk / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64
 
 export ANDROID_HOME := android_home
 export ANDROID_NDK_HOME := android_ndk
-export SHERPA_ONNX_LIB_DIR := sherpa_libs
 export JAVA_HOME := env("JAVA_HOME", "/usr")
 
 # ── Recipes ──
 
-# First-time desktop setup: generate and embed grammar models
-setup:
+# First-time desktop setup: shared-ORT sherpa-onnx libs + grammar models
+setup: _setup-sherpa-desktop _setup-grammar
+
+# Run desktop dev server with shared-ORT environment
+dev:
+    SHERPA_ONNX_LIB_DIR="{{desktop_deps}}/sherpa-onnx/lib" npx tauri dev
+
+# ── Desktop setup internals ──
+
+# Download sherpa-onnx prebuilt libs and set up shared ORT (mirrors Android pattern).
+# Static sherpa-onnx libs + stub libonnxruntime.a + real libonnxruntime.dylib
+# so both sherpa-onnx and the ort crate share a single ORT instance.
+_setup-sherpa-desktop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    LIB_DIR="{{desktop_deps}}/sherpa-onnx/lib"
+    MARKER="$LIB_DIR/.shared-ort"
+    if [ -f "$MARKER" ]; then
+        echo "==> Desktop sherpa-onnx libs already prepared"
+        exit 0
+    fi
+
+    VERSION="{{sherpa_version}}"
+    BASE_URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${VERSION}"
+    CACHE="{{desktop_deps}}/cache"
+    mkdir -p "$CACHE" "$LIB_DIR"
+
+    # Detect platform
+    ARCH=$(uname -m)
+    OS=$(uname -s)
+    if [ "$OS" = "Darwin" ] && [ "$ARCH" = "arm64" ]; then
+        STATIC_ARCHIVE="sherpa-onnx-v${VERSION}-osx-arm64-static-lib.tar.bz2"
+        SHARED_ARCHIVE="sherpa-onnx-v${VERSION}-osx-arm64-shared-lib.tar.bz2"
+    elif [ "$OS" = "Darwin" ] && [ "$ARCH" = "x86_64" ]; then
+        STATIC_ARCHIVE="sherpa-onnx-v${VERSION}-osx-x64-static-lib.tar.bz2"
+        SHARED_ARCHIVE="sherpa-onnx-v${VERSION}-osx-x64-shared-lib.tar.bz2"
+    elif [ "$OS" = "Linux" ] && [ "$ARCH" = "x86_64" ]; then
+        STATIC_ARCHIVE="sherpa-onnx-v${VERSION}-linux-x64-static-lib.tar.bz2"
+        SHARED_ARCHIVE="sherpa-onnx-v${VERSION}-linux-x64-shared-lib.tar.bz2"
+    elif [ "$OS" = "Linux" ] && [ "$ARCH" = "aarch64" ]; then
+        STATIC_ARCHIVE="sherpa-onnx-v${VERSION}-linux-aarch64-static-lib.tar.bz2"
+        SHARED_ARCHIVE="sherpa-onnx-v${VERSION}-linux-aarch64-shared-cpu-lib.tar.bz2"
+    else
+        echo "ERROR: Unsupported platform: $OS $ARCH"
+        exit 1
+    fi
+
+    # Download static archive (all .a files)
+    if [ ! -f "$CACHE/$STATIC_ARCHIVE" ]; then
+        echo "==> Downloading sherpa-onnx static libs..."
+        curl -fSL "$BASE_URL/$STATIC_ARCHIVE" -o "$CACHE/$STATIC_ARCHIVE"
+    fi
+
+    # Download shared archive (libonnxruntime.dylib/.so)
+    if [ ! -f "$CACHE/$SHARED_ARCHIVE" ]; then
+        echo "==> Downloading sherpa-onnx shared libs (for libonnxruntime)..."
+        curl -fSL "$BASE_URL/$SHARED_ARCHIVE" -o "$CACHE/$SHARED_ARCHIVE"
+    fi
+
+    # Extract static libs
+    echo "==> Extracting static libs..."
+    STATIC_STEM="${STATIC_ARCHIVE%.tar.bz2}"
+    tar -xjf "$CACHE/$STATIC_ARCHIVE" -C "$CACHE"
+    cp "$CACHE/$STATIC_STEM/lib/"*.a "$LIB_DIR/"
+
+    # Extract shared ORT dylib
+    echo "==> Extracting shared libonnxruntime..."
+    SHARED_STEM="${SHARED_ARCHIVE%.tar.bz2}"
+    tar -xjf "$CACHE/$SHARED_ARCHIVE" -C "$CACHE"
+    if [ "$OS" = "Darwin" ]; then
+        cp "$CACHE/$SHARED_STEM/lib/libonnxruntime"*.dylib "$LIB_DIR/"
+    else
+        cp "$CACHE/$SHARED_STEM/lib/libonnxruntime"*.so* "$LIB_DIR/"
+    fi
+
+    # Replace libonnxruntime.a with an empty stub archive.
+    # sherpa-onnx-sys emits `static=onnxruntime` which expects this file,
+    # but we want ORT symbols to come from the shared library only.
+    echo "==> Creating stub libonnxruntime.a..."
+    rm -f "$LIB_DIR/libonnxruntime.a"
+    # macOS ar doesn't support creating empty archives with `ar rcs`.
+    # Create a trivial .o with an empty .c file, archive it, then clean up.
+    STUB_C=$(mktemp /tmp/ort_stub.XXXXXX.c)
+    STUB_O="${STUB_C%.c}.o"
+    : > "$STUB_C"
+    cc -c "$STUB_C" -o "$STUB_O"
+    ar rcs "$LIB_DIR/libonnxruntime.a" "$STUB_O"
+    rm -f "$STUB_C" "$STUB_O"
+
+    touch "$MARKER"
+    echo "==> Desktop sherpa-onnx ready (shared ORT)"
+    ls -lh "$LIB_DIR/libonnxruntime"*
+
+# Export and download neural grammar models
+_setup-grammar:
     #!/usr/bin/env bash
     set -euo pipefail
     GRAMMAR_DIR="{{tauri_dir}}/data/grammar"
@@ -57,7 +154,7 @@ setup:
 
 # First-time Android setup: sherpa-onnx libs, ORT shared library, grammar models
 setup-android:
-    {{repo_root}}/scripts/android-build.sh --setup-only
+    SHERPA_ONNX_LIB_DIR="{{sherpa_libs}}" {{repo_root}}/scripts/android-build.sh --setup-only
 
 # Build debug APK (default)
 apk: _ensure-keystore (_build "debug")
@@ -89,7 +186,7 @@ _build profile: _tauri-build _strip _repackage _sign
 _tauri-build:
     @echo "==> Building with Tauri CLI (arm64)..."
     @test -f {{sherpa_libs}}/libsherpa-onnx-c-api.a || (echo "ERROR: sherpa-onnx libs not found at {{sherpa_libs}}" && echo "Run: just setup-android" && exit 1)
-    cd {{repo_root}} && npx tauri android build --target aarch64 --apk
+    cd {{repo_root}} && SHERPA_ONNX_LIB_DIR="{{sherpa_libs}}" npx tauri android build --target aarch64 --apk
 
 # Strip debug symbols from .so to reduce APK size
 _strip:
