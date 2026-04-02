@@ -3,6 +3,26 @@ const { listen } = window.__TAURI__.event;
 
 let engineReady = false;
 
+// ── Confirm dialog (window.confirm doesn't work in WKWebView) ──
+
+function showConfirm(message) {
+  return new Promise((resolve) => {
+    const dialog = document.getElementById('confirm-dialog');
+    document.getElementById('confirm-msg').textContent = message;
+    dialog.classList.remove('hidden');
+    dialog.classList.add('flex');
+
+    const cleanup = (result) => {
+      dialog.classList.add('hidden');
+      dialog.classList.remove('flex');
+      resolve(result);
+    };
+
+    document.getElementById('confirm-ok').onclick = () => cleanup(true);
+    document.getElementById('confirm-cancel').onclick = () => cleanup(false);
+  });
+}
+
 // ── Tab switching ──
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -253,7 +273,7 @@ document.getElementById('export-history').addEventListener('click', async () => 
 });
 
 document.getElementById('clear-history').addEventListener('click', async () => {
-  if (!confirm('Clear all history?')) return;
+  if (!await showConfirm('Clear all history?')) return;
   try {
     await invoke('clear_history');
     renderHistory([]);
@@ -338,7 +358,7 @@ async function loadModels() {
         await invoke('download_model', { id });
       } catch (err) {
         console.error('Download failed:', err);
-        alert(`Download failed: ${err}`);
+        showToast(`Download failed: ${err}`);
       }
 
       // Refresh model list after download completes or fails
@@ -368,12 +388,12 @@ async function loadModels() {
   document.querySelectorAll('.del-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = btn.dataset.id;
-      if (!confirm(`Delete model ${id}?`)) return;
+      if (!await showConfirm(`Delete model ${id}?`)) return;
       try {
         await invoke('delete_model', { id });
       } catch (err) {
         console.error('Delete failed:', err);
-        alert(`Failed to delete model: ${err}`);
+        showToast(`Failed to delete model: ${err}`);
       }
       await loadModels();
     });
@@ -481,7 +501,7 @@ async function saveConfig() {
     setTimeout(() => { btn.textContent = 'Save Changes'; }, 1500);
   } catch (err) {
     console.error('Save failed:', err);
-    alert(`Save failed: ${err}`);
+    showToast(`Save failed: ${err}`);
   }
 }
 

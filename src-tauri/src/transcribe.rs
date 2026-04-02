@@ -3,6 +3,10 @@ use std::sync::mpsc;
 use std::sync::Mutex;
 use std::time::Instant;
 
+/// Minimum plausible ONNX model file size (64 KB).  Anything smaller is
+/// almost certainly a truncated / failed download.
+const MIN_MODEL_FILE_BYTES: u64 = 64 * 1024;
+
 /// Which engine/config to use when creating the recognizer.
 #[derive(Clone, Debug)]
 pub enum ModelEngine {
@@ -46,38 +50,38 @@ impl Transcriber {
     /// ONNX model is fully loaded into memory. Returns an error if any
     /// model file is missing or the recognizer fails to initialize.
     pub fn new(engine: ModelEngine) -> Result<Self, String> {
-        match &engine {
-            ModelEngine::Transducer { encoder, decoder, joiner, tokens, .. } => {
-                for (name, path) in [
-                    ("encoder", encoder.as_str()),
-                    ("decoder", decoder.as_str()),
-                    ("joiner", joiner.as_str()),
-                    ("tokens", tokens.as_str()),
-                ] {
-                    if !Path::new(path).exists() {
-                        return Err(format!("model file not found: {name} at {path}"));
-                    }
-                }
+        // Collect (role, path, is_onnx_model) tuples for validation.
+        let files: Vec<(&str, &str, bool)> = match &engine {
+            ModelEngine::Transducer { encoder, decoder, joiner, tokens, .. } => vec![
+                ("encoder", encoder.as_str(), true),
+                ("decoder", decoder.as_str(), true),
+                ("joiner", joiner.as_str(), true),
+                ("tokens", tokens.as_str(), false),
+            ],
+            ModelEngine::Whisper { encoder, decoder, tokens, .. } => vec![
+                ("encoder", encoder.as_str(), true),
+                ("decoder", decoder.as_str(), true),
+                ("tokens", tokens.as_str(), false),
+            ],
+            ModelEngine::NemoCTC { model, tokens } => vec![
+                ("model", model.as_str(), true),
+                ("tokens", tokens.as_str(), false),
+            ],
+        };
+
+        for (name, path, is_model) in &files {
+            let p = Path::new(path);
+            if !p.exists() {
+                return Err(format!("model file not found: {name} at {path}"));
             }
-            ModelEngine::Whisper { encoder, decoder, tokens, .. } => {
-                for (name, path) in [
-                    ("encoder", encoder.as_str()),
-                    ("decoder", decoder.as_str()),
-                    ("tokens", tokens.as_str()),
-                ] {
-                    if !Path::new(path).exists() {
-                        return Err(format!("model file not found: {name} at {path}"));
-                    }
-                }
-            }
-            ModelEngine::NemoCTC { model, tokens } => {
-                for (name, path) in [
-                    ("model", model.as_str()),
-                    ("tokens", tokens.as_str()),
-                ] {
-                    if !Path::new(path).exists() {
-                        return Err(format!("model file not found: {name} at {path}"));
-                    }
+            if *is_model {
+                let size = std::fs::metadata(p)
+                    .map(|m| m.len())
+                    .unwrap_or(0);
+                if size < MIN_MODEL_FILE_BYTES {
+                    return Err(format!(
+                        "{name} file appears truncated ({size} bytes, expected ≥{MIN_MODEL_FILE_BYTES}): {path}"
+                    ));
                 }
             }
         }
@@ -183,14 +187,36 @@ fn worker(
     let _ = std::env::set_current_dir(model_dir);
 
     let load_start = Instant::now();
-    let recognizer = match create_recognizer(engine) {
-        Some(r) => {
+
+    // sherpa-onnx calls ONNX Runtime through C++ FFI.  If the model file is
+    // corrupt or incompatible, ORT may throw a C++ `Ort::Exception` that
+    // crosses the FFI boundary.  `catch_unwind` converts foreign unwind into
+    // an Err on platforms that support it (and is a no-op where it doesn't),
+    // preventing the entire process from aborting.
+    let recognizer_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        create_recognizer(engine)
+    }));
+
+    let recognizer = match recognizer_result {
+        Ok(Some(r)) => {
             log::info!("Model loaded in {}ms", load_start.elapsed().as_millis());
             let _ = ready_tx.send(Ok(()));
             r
         }
-        None => {
-            let _ = ready_tx.send(Err("failed to create recognizer".into()));
+        Ok(None) => {
+            let _ = ready_tx.send(Err("failed to create recognizer (sherpa-onnx returned null)".into()));
+            return;
+        }
+        Err(panic_info) => {
+            let msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                format!("model initialization panicked: {s}")
+            } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                format!("model initialization panicked: {s}")
+            } else {
+                "model initialization panicked (ONNX Runtime exception)".to_string()
+            };
+            log::error!("{msg}");
+            let _ = ready_tx.send(Err(msg));
             return;
         }
     };
