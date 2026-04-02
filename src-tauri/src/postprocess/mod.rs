@@ -126,19 +126,21 @@ pub fn postprocess(text: &str) -> PipelineResult {
         duration_ms: ms,
     });
 
-    // Stage 4: Spell correction
-    let t = Instant::now();
-    let prev = s.clone();
-    s = pipeline.spelling.correct(&s);
-    let changed = s != prev;
-    let ms = t.elapsed().as_millis() as u64;
-    log::debug!("Pipeline stage 4 (Spelling): {ms}ms changed={changed}");
-    stages.push(PipelineStage {
-        name: "Spelling".to_string(),
-        text: s.clone(),
-        changed,
-        duration_ms: ms,
-    });
+    // Stage 4: Spell correction (disabled — SymSpell corrupts proper nouns and
+    // CamelCase tokens that are absent from its British English corpus. ASR
+    // output doesn't produce edit-distance typos so the stage adds no value.)
+    // let t = Instant::now();
+    // let prev = s.clone();
+    // s = pipeline.spelling.correct(&s);
+    // let changed = s != prev;
+    // let ms = t.elapsed().as_millis() as u64;
+    // log::debug!("Pipeline stage 4 (Spelling): {ms}ms changed={changed}");
+    // stages.push(PipelineStage {
+    //     name: "Spelling".to_string(),
+    //     text: s.clone(),
+    //     changed,
+    //     duration_ms: ms,
+    // });
 
     // Final cleanup
     let t = Instant::now();
@@ -306,6 +308,27 @@ fn fix_mid_sentence_caps(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reporting test: run all cases in /tmp/pipeline_input.json through
+    /// the full postprocess pipeline and write TSV results to
+    /// /tmp/pipeline_output.tsv.  Run with:
+    ///   cargo test --lib pipeline_report -- --nocapture --ignored
+    #[test]
+    #[ignore]
+    fn pipeline_report() {
+        use std::io::Write;
+        let raw = std::fs::read_to_string("/tmp/pipeline_input.json")
+            .expect("/tmp/pipeline_input.json not found — run scripts/test_full_pipeline.py first");
+        let cases: Vec<(String, String)> = serde_json::from_str(&raw).unwrap();
+        let mut out = std::fs::File::create("/tmp/pipeline_output.tsv").unwrap();
+        for (input, category) in &cases {
+            let result = postprocess(input);
+            let norm_in  = input.trim().trim_end_matches(['.','!','?']).trim().to_lowercase();
+            let norm_out = result.text.trim().trim_end_matches(['.','!','?']).trim().to_lowercase();
+            let changed = norm_in != norm_out;
+            writeln!(out, "{}\t{}\t{}\t{}", input, result.text, changed, category).unwrap();
+        }
+    }
 
     #[test]
     fn postprocess_empty() {
