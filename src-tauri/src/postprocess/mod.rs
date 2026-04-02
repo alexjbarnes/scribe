@@ -132,39 +132,52 @@ pub fn postprocess(text: &str) -> PipelineResult {
     // Neural path (CoLA router + T5 corrector) when models are loaded;
     // nlprule (LanguageTool rules) otherwise.
     //
+    // Skipped for short texts: fragments and replacement phrases (e.g. two
+    // words dictated over a selection) score very low on CoLA and get routed
+    // to T5, which adds unwanted content. Rule-based nlprule has the same
+    // problem with fragments. Five words is the minimum for a meaningful
+    // correction.
+    //
     // catch_unwind guards against any Rust panic (e.g., from ORT internals
     // or nlprule deserialization) crossing a JNI boundary and aborting the
     // process on Android. Native crashes (SIGSEGV) are not caught here.
+    const MIN_GRAMMAR_WORDS: usize = 5;
     let t = Instant::now();
     let prev = s.clone();
     let grammar_label;
-    let grammar_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if let Some(neural) = grammar_neural::global() {
-            let corrected = if neural.needs_correction(&s) {
-                neural.correct(&s)
+    let word_count = s.split_whitespace().count();
+    if word_count < MIN_GRAMMAR_WORDS {
+        log::debug!("Pipeline stage 4: grammar skipped ({word_count} words < {MIN_GRAMMAR_WORDS})");
+        grammar_label = "Grammar (skipped)";
+    } else {
+        let grammar_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if let Some(neural) = grammar_neural::global() {
+                let corrected = if neural.needs_correction(&s) {
+                    neural.correct(&s)
+                } else {
+                    s.clone()
+                };
+                (corrected, "Grammar (neural)")
             } else {
-                s.clone()
-            };
-            (corrected, "Grammar (neural)")
-        } else {
-            let pipeline = get_pipeline();
-            let corrected = pipeline.grammar.correct(&s);
-            (corrected, "Grammar (nlprule)")
-        }
-    }));
-    match grammar_result {
-        Ok((corrected, label)) => {
-            s = corrected;
-            grammar_label = label;
-        }
-        Err(payload) => {
-            let msg = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
-                .unwrap_or("(non-string panic)");
-            log::error!("Pipeline stage 4: grammar correction panicked: {msg}");
-            grammar_label = "Grammar (error)";
+                let pipeline = get_pipeline();
+                let corrected = pipeline.grammar.correct(&s);
+                (corrected, "Grammar (nlprule)")
+            }
+        }));
+        match grammar_result {
+            Ok((corrected, label)) => {
+                s = corrected;
+                grammar_label = label;
+            }
+            Err(payload) => {
+                let msg = payload
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                    .unwrap_or("(non-string panic)");
+                log::error!("Pipeline stage 4: grammar correction panicked: {msg}");
+                grammar_label = "Grammar (error)";
+            }
         }
     }
     let changed = s != prev;
