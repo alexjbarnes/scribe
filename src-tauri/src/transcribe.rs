@@ -11,12 +11,17 @@ pub enum ModelEngine {
         decoder: String,
         joiner: String,
         tokens: String,
+        model_type: String,
     },
     Whisper {
         encoder: String,
         decoder: String,
         tokens: String,
         language: String,
+    },
+    NemoCTC {
+        model: String,
+        tokens: String,
     },
 }
 
@@ -42,7 +47,7 @@ impl Transcriber {
     /// model file is missing or the recognizer fails to initialize.
     pub fn new(engine: ModelEngine) -> Result<Self, String> {
         match &engine {
-            ModelEngine::Transducer { encoder, decoder, joiner, tokens } => {
+            ModelEngine::Transducer { encoder, decoder, joiner, tokens, .. } => {
                 for (name, path) in [
                     ("encoder", encoder.as_str()),
                     ("decoder", decoder.as_str()),
@@ -65,11 +70,28 @@ impl Transcriber {
                     }
                 }
             }
+            ModelEngine::NemoCTC { model, tokens } => {
+                for (name, path) in [
+                    ("model", model.as_str()),
+                    ("tokens", tokens.as_str()),
+                ] {
+                    if !Path::new(path).exists() {
+                        return Err(format!("model file not found: {name} at {path}"));
+                    }
+                }
+            }
         }
 
         let model_dir = match &engine {
             ModelEngine::Transducer { encoder, .. } | ModelEngine::Whisper { encoder, .. } => {
                 Path::new(encoder)
+                    .parent()
+                    .unwrap_or(Path::new("."))
+                    .to_string_lossy()
+                    .into_owned()
+            }
+            ModelEngine::NemoCTC { model, .. } => {
+                Path::new(model)
                     .parent()
                     .unwrap_or(Path::new("."))
                     .to_string_lossy()
@@ -129,12 +151,12 @@ fn create_recognizer(
     config.model_config.provider = Some("cpu".into());
 
     match engine {
-        ModelEngine::Transducer { encoder, decoder, joiner, tokens } => {
+        ModelEngine::Transducer { encoder, decoder, joiner, tokens, model_type } => {
             config.model_config.transducer.encoder = Some(encoder.clone());
             config.model_config.transducer.decoder = Some(decoder.clone());
             config.model_config.transducer.joiner = Some(joiner.clone());
             config.model_config.tokens = Some(tokens.clone());
-            config.model_config.model_type = Some("nemo_transducer".into());
+            config.model_config.model_type = Some(model_type.clone());
         }
         ModelEngine::Whisper { encoder, decoder, tokens, language } => {
             config.model_config.whisper.encoder = Some(encoder.clone());
@@ -142,6 +164,10 @@ fn create_recognizer(
             config.model_config.tokens = Some(tokens.clone());
             config.model_config.whisper.language = Some(language.clone());
             config.model_config.whisper.task = Some("transcribe".into());
+        }
+        ModelEngine::NemoCTC { model, tokens } => {
+            config.model_config.nemo_ctc.model = Some(model.clone());
+            config.model_config.tokens = Some(tokens.clone());
         }
     }
 

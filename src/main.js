@@ -1,6 +1,8 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
+let engineReady = false;
+
 // ── Tab switching ──
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -313,6 +315,16 @@ async function loadModels() {
     .map(renderModelRow)
     .join('');
 
+  document.getElementById('zipformer-models').innerHTML = models
+    .filter(m => m.engine === 'zipformer')
+    .map(renderModelRow)
+    .join('');
+
+  document.getElementById('conformer-models').innerHTML = models
+    .filter(m => m.engine === 'conformer_ctc')
+    .map(renderModelRow)
+    .join('');
+
   // Attach download button handlers
   document.querySelectorAll('.dl-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -336,15 +348,18 @@ async function loadModels() {
   // Attach use button handlers
   document.querySelectorAll('.use-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
+      if (!engineReady) {
+        showToast('Engine still loading...');
+        return;
+      }
       const id = btn.dataset.id;
       try {
         await invoke('switch_model', { id });
-        showToast('Switching model...');
+        await loadModels();
       } catch (err) {
         console.error('Switch failed:', err);
-        alert(`Failed to switch model: ${err}`);
+        showToast('Failed to switch model: ' + err);
       }
-      await loadModels();
     });
   });
 
@@ -399,9 +414,26 @@ listen('download-complete', async () => {
   await loadModels();
 });
 
+listen('engine-ready', () => {
+  engineReady = true;
+});
+
+listen('model-loading', (event) => {
+  showToast('Loading model...');
+});
+
 listen('model-loaded', (event) => {
-  const id = event.payload?.id || '';
-  showToast(`Model ready: ${id}`);
+  if (!event.payload?.native_toast) {
+    showToast(`Model ready: ${event.payload?.id || ''}`);
+  }
+  loadModels();
+});
+
+listen('model-error', (event) => {
+  if (!event.payload?.native_toast) {
+    showToast('Model load failed: ' + (event.payload?.error || 'unknown error'));
+  }
+  loadModels();
 });
 
 // ── Audio tab ──

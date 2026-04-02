@@ -180,12 +180,24 @@ impl ModelManager {
                 decoder: path("decoder")?,
                 joiner: path("joiner")?,
                 tokens: path("tokens")?,
+                model_type: "nemo_transducer".into(),
+            }),
+            "zipformer" => Some(crate::transcribe::ModelEngine::Transducer {
+                encoder: path("encoder")?,
+                decoder: path("decoder")?,
+                joiner: path("joiner")?,
+                tokens: path("tokens")?,
+                model_type: "transducer".into(),
             }),
             "whisper" => Some(crate::transcribe::ModelEngine::Whisper {
                 encoder: path("encoder")?,
                 decoder: path("decoder")?,
                 tokens: path("tokens")?,
                 language: "en".into(),
+            }),
+            "conformer_ctc" => Some(crate::transcribe::ModelEngine::NemoCTC {
+                model: path("model")?,
+                tokens: path("tokens")?,
             }),
             _ => None,
         }
@@ -240,7 +252,7 @@ impl ModelManager {
             "parakeet-tdt-0.6b-v2",
         ];
         for id in preferred {
-            if let Some(crate::transcribe::ModelEngine::Transducer { encoder, decoder, joiner, tokens }) =
+            if let Some(crate::transcribe::ModelEngine::Transducer { encoder, decoder, joiner, tokens, .. }) =
                 self.model_engine(id)
             {
                 return Some((id.to_string(), (encoder, decoder, joiner, tokens)));
@@ -475,6 +487,16 @@ const HF_PARAKEET_V3: &str =
     "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/main";
 const HF_PARAKEET_V3_INT8: &str =
     "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main";
+const HF_DISTIL_WHISPER_SMALL_EN: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-distil-small.en/resolve/main";
+const HF_ZIPFORMER_EN: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-zipformer-en-2023-06-26/resolve/main";
+const HF_NEMO_CTC_SMALL: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-small/resolve/main";
+const HF_NEMO_CTC_MEDIUM: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-medium/resolve/main";
+const HF_NEMO_CTC_LARGE: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-ctc-en-conformer-large/resolve/main";
 
 fn builtin_registry() -> Vec<ModelDef> {
     vec![
@@ -537,6 +559,69 @@ fn builtin_registry() -> Vec<ModelDef> {
                 ModelFile { url: format!("{HF_WHISPER_TURBO}/turbo-encoder.int8.onnx"), rel_path: "whisper/turbo-int8/encoder.int8.onnx".into(), bytes: 675_000_000, role: "encoder".into() },
                 ModelFile { url: format!("{HF_WHISPER_TURBO}/turbo-decoder.int8.onnx"), rel_path: "whisper/turbo-int8/decoder.int8.onnx".into(), bytes: 361_000_000, role: "decoder".into() },
                 ModelFile { url: format!("{HF_WHISPER_TURBO}/turbo-tokens.txt"), rel_path: "whisper/turbo-int8/tokens.txt".into(), bytes: 797_000, role: "tokens".into() },
+            ],
+        },
+        // Distil-Whisper Small EN INT8
+        ModelDef {
+            id: "distil-whisper-small.en-int8".into(),
+            name: "Distil-Whisper Small EN INT8".into(),
+            desc: "English \u{2014} fast, ~299 MB".into(),
+            engine: "whisper".into(),
+            size: "~299 MB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_DISTIL_WHISPER_SMALL_EN}/distil-small.en-encoder.int8.onnx"), rel_path: "whisper/distil-small.en-int8/encoder.int8.onnx".into(), bytes: 102_961_431, role: "encoder".into() },
+                ModelFile { url: format!("{HF_DISTIL_WHISPER_SMALL_EN}/distil-small.en-decoder.int8.onnx"), rel_path: "whisper/distil-small.en-int8/decoder.int8.onnx".into(), bytes: 195_079_097, role: "decoder".into() },
+                ModelFile { url: format!("{HF_DISTIL_WHISPER_SMALL_EN}/distil-small.en-tokens.txt"), rel_path: "whisper/distil-small.en-int8/tokens.txt".into(), bytes: 835_554, role: "tokens".into() },
+            ],
+        },
+        // NeMo Conformer-CTC Small EN INT8
+        ModelDef {
+            id: "conformer-ctc-small-en-int8".into(),
+            name: "Conformer-CTC Small EN INT8".into(),
+            desc: "English \u{2014} tiny, ~46 MB".into(),
+            engine: "conformer_ctc".into(),
+            size: "~46 MB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_NEMO_CTC_SMALL}/model.int8.onnx"), rel_path: "conformer_ctc/small/model.int8.onnx".into(), bytes: 46_419_854, role: "model".into() },
+                ModelFile { url: format!("{HF_NEMO_CTC_SMALL}/tokens.txt"), rel_path: "conformer_ctc/small/tokens.txt".into(), bytes: 11_611, role: "tokens".into() },
+            ],
+        },
+        // NeMo Conformer-CTC Medium EN INT8
+        ModelDef {
+            id: "conformer-ctc-medium-en-int8".into(),
+            name: "Conformer-CTC Medium EN INT8".into(),
+            desc: "English \u{2014} balanced, ~68 MB".into(),
+            engine: "conformer_ctc".into(),
+            size: "~68 MB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_NEMO_CTC_MEDIUM}/model.int8.onnx"), rel_path: "conformer_ctc/medium/model.int8.onnx".into(), bytes: 67_632_742, role: "model".into() },
+                ModelFile { url: format!("{HF_NEMO_CTC_MEDIUM}/tokens.txt"), rel_path: "conformer_ctc/medium/tokens.txt".into(), bytes: 11_611, role: "tokens".into() },
+            ],
+        },
+        // NeMo Conformer-CTC Large EN INT8
+        ModelDef {
+            id: "conformer-ctc-large-en-int8".into(),
+            name: "Conformer-CTC Large EN INT8".into(),
+            desc: "English \u{2014} 2.2% WER, ~169 MB".into(),
+            engine: "conformer_ctc".into(),
+            size: "~169 MB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_NEMO_CTC_LARGE}/model.int8.onnx"), rel_path: "conformer_ctc/large/model.int8.onnx".into(), bytes: 169_392_184, role: "model".into() },
+                ModelFile { url: format!("{HF_NEMO_CTC_LARGE}/tokens.txt"), rel_path: "conformer_ctc/large/tokens.txt".into(), bytes: 978, role: "tokens".into() },
+            ],
+        },
+        // Zipformer EN INT8
+        ModelDef {
+            id: "zipformer-en-int8".into(),
+            name: "Zipformer EN INT8".into(),
+            desc: "English \u{2014} lightweight, ~71 MB".into(),
+            engine: "zipformer".into(),
+            size: "~71 MB".into(),
+            files: vec![
+                ModelFile { url: format!("{HF_ZIPFORMER_EN}/encoder-epoch-99-avg-1.int8.onnx"), rel_path: "zipformer/en/encoder.int8.onnx".into(), bytes: 68_778_564, role: "encoder".into() },
+                ModelFile { url: format!("{HF_ZIPFORMER_EN}/decoder-epoch-99-avg-1.int8.onnx"), rel_path: "zipformer/en/decoder.int8.onnx".into(), bytes: 1_307_236, role: "decoder".into() },
+                ModelFile { url: format!("{HF_ZIPFORMER_EN}/joiner-epoch-99-avg-1.int8.onnx"), rel_path: "zipformer/en/joiner.int8.onnx".into(), bytes: 259_335, role: "joiner".into() },
+                ModelFile { url: format!("{HF_ZIPFORMER_EN}/tokens.txt"), rel_path: "zipformer/en/tokens.txt".into(), bytes: 5_048, role: "tokens".into() },
             ],
         },
         // Parakeet V3

@@ -124,31 +124,126 @@ fn get_speaker_enrollment_status() -> bool {
     speaker::load_enrollment().is_some()
 }
 
+#[cfg(target_os = "android")]
+static GLOBAL_JVM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
+
+/// GlobalRef to VerbaApp class, cached at JNI_OnLoad time.
+///
+/// Android's class loader is thread-local. Background Rust threads that attach to
+/// the JVM via attach_current_thread get the bootstrap class loader, which only
+/// knows SDK classes — it cannot find app classes like VerbaApp. By resolving and
+/// caching the class during JNI_OnLoad (called on the Java main thread, which has
+/// the application class loader), we can safely use it from any thread afterwards.
+#[cfg(target_os = "android")]
+static VERBA_APP_CLASS: std::sync::OnceLock<jni::objects::GlobalRef> = std::sync::OnceLock::new();
+
+/// Called once by the Android runtime when System.loadLibrary("verba_rs_lib") runs.
+/// We are on the Java main thread here, so find_class works for app classes.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn JNI_OnLoad(
+    vm: *mut jni::sys::JavaVM,
+    _reserved: *mut std::ffi::c_void,
+) -> jni::sys::jint {
+    let Ok(vm) = (unsafe { jni::JavaVM::from_raw(vm) }) else {
+        return jni::sys::JNI_VERSION_1_6;
+    };
+    if let Ok(mut env) = vm.get_env() {
+        if let Ok(class) = env.find_class("com/alexb151/verba/VerbaApp") {
+            if let Ok(global) = env.new_global_ref(class) {
+                let _ = VERBA_APP_CLASS.set(global);
+            }
+        }
+    }
+    let _ = GLOBAL_JVM.set(vm);
+    jni::sys::JNI_VERSION_1_6
+}
+
+#[cfg(target_os = "android")]
+fn android_show_toast(msg: &str) {
+    use jni::objects::JValue;
+    let vm = match GLOBAL_JVM.get() {
+        Some(v) => v,
+        None => { log::warn!("android_show_toast: JVM not initialized"); return; }
+    };
+    let class_ref = match VERBA_APP_CLASS.get() {
+        Some(c) => c,
+        None => { log::warn!("android_show_toast: VerbaApp class not cached"); return; }
+    };
+    let mut env = match vm.attach_current_thread_permanently() {
+        Ok(e) => e,
+        Err(e) => { log::warn!("android_show_toast: attach: {e}"); return; }
+    };
+    let Ok(msg_str) = env.new_string(msg) else {
+        log::warn!("android_show_toast: new_string failed");
+        return;
+    };
+    // Safe: VERBA_APP_CLASS holds a GlobalRef that keeps the class alive.
+    let class = unsafe { jni::objects::JClass::from_raw(class_ref.as_raw()) };
+    if let Err(e) = env.call_static_method(
+        class,
+        "showToast",
+        "(Ljava/lang/String;)V",
+        &[JValue::Object(&*msg_str)],
+    ) {
+        log::warn!("android_show_toast: {e}");
+    }
+}
+
 #[tauri::command]
 async fn switch_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
     models::ModelManager::global().set_active(&id)?;
-    log::info!("Switched to model: {id}");
+    log::info!("Switching to model: {id}");
+    #[cfg(not(target_os = "android"))]
+    let _ = app.emit("model-loading", serde_json::json!({ "id": &id }));
+    #[cfg(target_os = "android")]
+    android_show_toast("Loading model...");
 
-    let id_for_thread = id.clone();
-    tokio::task::spawn_blocking(move || -> Result<(), String> {
-        let mgr = models::ModelManager::global();
-        let result = engine::with_mut(|eng| {
-            if eng.model_id() == id_for_thread {
-                return Ok(());
+    tokio::spawn(async move {
+        let id2 = id.clone();
+        let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mgr = models::ModelManager::global();
+            let result = engine::with_mut(|eng| {
+                if eng.model_id() == id2 {
+                    return Ok(());
+                }
+                log::info!("Reloading model to {id2}");
+                let model_engine = mgr.model_engine(&id2)
+                    .ok_or_else(|| format!("model {id2} not downloaded"))?;
+                let t = transcribe::Transcriber::new(model_engine)?;
+                eng.reload_model(t, id2.clone());
+                Ok(())
+            });
+            result.unwrap_or_else(|| Err("Engine still loading, please wait".into()))
+        })
+        .await;
+
+        match result {
+            Ok(Ok(())) => {
+                #[cfg(target_os = "android")]
+                android_show_toast("Model ready");
+                let _ = app.emit("model-loaded", serde_json::json!({
+                    "id": &id,
+                    "native_toast": cfg!(target_os = "android"),
+                }));
             }
-            log::info!("Reloading model to {id_for_thread}");
-            let model_engine = mgr.model_engine(&id_for_thread)
-                .ok_or_else(|| format!("model {id_for_thread} not downloaded"))?;
-            let t = transcribe::Transcriber::new(model_engine)?;
-            eng.reload_model(t, id_for_thread.clone());
-            Ok(())
-        });
-        result.unwrap_or_else(|| Err("engine not initialized".into()))
-    })
-    .await
-    .map_err(|e| format!("model reload failed: {e}"))??;
+            Ok(Err(e)) => {
+                log::error!("Model reload failed: {e}");
+                #[cfg(target_os = "android")]
+                android_show_toast(&format!("Model load failed: {e}"));
+                let _ = app.emit("model-error", serde_json::json!({
+                    "id": &id,
+                    "error": e,
+                    "native_toast": cfg!(target_os = "android"),
+                }));
+            }
+            Err(e) => {
+                log::error!("Model reload task panicked: {e}");
+                let _ = app.emit("model-error", serde_json::json!({ "id": &id, "error": e.to_string() }));
+            }
+        }
+    });
 
-    let _ = app.emit("model-loaded", serde_json::json!({ "id": &id }));
     Ok(())
 }
 
