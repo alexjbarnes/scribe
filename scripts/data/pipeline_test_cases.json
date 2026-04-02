@@ -102,5 +102,65 @@
         "transcribe_ms": 1179
       }
     ]
+  },
+  {
+    "timestamp": "2026-04-02T15:03:34.066970270+00:00",
+    "text": "Does the neural grammar model that we use does it have an upper limit? I ask because when I am sending large amounts of text through it, I see the end bits being chopped off at times. See this as an example.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 341,
+    "audio_duration_ms": 18734,
+    "postprocess_ms": 388,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "Does the neural grammar model that we're using does it have a upper limit? I ask because I when I am sending large amounts of text through it, I'm seeing s the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "Does the neural grammar model that we're using does it have a upper limit? I ask because I when I am sending large amounts of text through it, I'm seeing s the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "ITN",
+        "text": "Does the neural grammar model that we're using does it have a upper limit? I ask because I when I am sending large amounts of text through it, I'm seeing s the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Vocab",
+        "text": "Does the neural grammar model that we're using does it have a upper limit? I ask because I when I am sending large amounts of text through it, I'm seeing s the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "Does the neural grammar model that we use does it have an upper limit? I ask because when I am sending large amounts of text through it, I see the end bits being chopped off at times. See this as an example.",
+        "changed": true,
+        "duration_ms": 388
+      },
+      {
+        "name": "Cleanup",
+        "text": "Does the neural grammar model that we use does it have an upper limit? I ask because when I am sending large amounts of text through it, I see the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      {
+        "audio_ms": 5528,
+        "transcribe_ms": 865
+      },
+      {
+        "audio_ms": 9860,
+        "transcribe_ms": 1465
+      },
+      {
+        "audio_ms": 1540,
+        "transcribe_ms": 339
+      }
+    ]
   }
 ]
