@@ -6,7 +6,7 @@ Usage:
     python scripts/export_cola_onnx.py --output-dir /path/to/grammar/
 
 Requires:
-    pip install transformers torch onnx onnxruntime
+    pip install optimum[onnxruntime] transformers
 """
 import argparse
 import shutil
@@ -21,49 +21,46 @@ def main():
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    import torch
-    from transformers import AutoTokenizer, AutoModelForSequenceClassification
-    from onnxruntime.quantization import quantize_dynamic, QuantType
+    from optimum.onnxruntime import ORTModelForSequenceClassification
+    from optimum.onnxruntime.configuration import AutoQuantizationConfig
+    from optimum.onnxruntime import ORTQuantizer
+    from transformers import AutoTokenizer
 
     model_id = "pszemraj/electra-small-discriminator-CoLA"
-    print(f"Loading {model_id}...")
+    print(f"Exporting {model_id} to ONNX...")
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModelForSequenceClassification.from_pretrained(model_id, torchscript=True)
-    model.eval()
+    # Export directly to ONNX via optimum — handles opset, dynamic shapes, etc.
+    tmp_dir = out / "_export_tmp"
+    model = ORTModelForSequenceClassification.from_pretrained(model_id, export=True)
+    model.save_pretrained(str(tmp_dir))
+
+    # Quantize to INT8.
+    quantizer = ORTQuantizer.from_pretrained(str(tmp_dir))
+    qconfig = AutoQuantizationConfig.avx512_vnni(is_static=False, per_channel=False)
+    quantizer.quantize(save_dir=str(tmp_dir / "quantized"), quantization_config=qconfig)
+
+    # Copy the files we need to the output dir with canonical names.
+    q_model = tmp_dir / "quantized" / "model_quantized.onnx"
+    if not q_model.exists():
+        # Fall back to unquantized if quantization produced a different name.
+        q_model = next((tmp_dir / "quantized").glob("*.onnx"), None) or \
+                  next(tmp_dir.glob("*.onnx"), None)
+
+    shutil.copy(q_model, out / "cola_model_quantized.onnx")
+    print(f"INT8 ONNX: cola_model_quantized.onnx ({q_model.stat().st_size // 1024}KB)")
 
     # Save tokenizer.json for the Rust tokenizers crate.
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
     tokenizer.save_pretrained(str(out))
     tok_src = out / "tokenizer.json"
     tok_dst = out / "cola_tokenizer.json"
-    if tok_src.exists() and tok_src != tok_dst:
+    if tok_src.exists():
         shutil.copy(tok_src, tok_dst)
+        tok_src.unlink()
     print(f"Tokenizer: {tok_dst}")
 
-    # Export to FP32 ONNX.
-    dummy = tokenizer("Hello world", return_tensors="pt")
-    fp32_path = out / "cola_model.onnx"
-    torch.onnx.export(
-        model,
-        (dummy["input_ids"], dummy["attention_mask"], dummy["token_type_ids"]),
-        str(fp32_path),
-        input_names=["input_ids", "attention_mask", "token_type_ids"],
-        output_names=["logits"],
-        dynamic_axes={
-            "input_ids":      {0: "batch", 1: "seq"},
-            "attention_mask": {0: "batch", 1: "seq"},
-            "token_type_ids": {0: "batch", 1: "seq"},
-            "logits":         {0: "batch"},
-        },
-        opset_version=14,
-    )
-    print(f"FP32 ONNX: {fp32_path} ({fp32_path.stat().st_size // 1024}KB)")
-
-    # Quantize to INT8.
-    q_path = out / "cola_model_quantized.onnx"
-    quantize_dynamic(str(fp32_path), str(q_path), weight_type=QuantType.QInt8)
-    fp32_path.unlink()
-    print(f"INT8 ONNX: {q_path} ({q_path.stat().st_size // 1024}KB)")
+    # Clean up temp dir.
+    shutil.rmtree(tmp_dir)
 
     print(f"\nFiles written to {out}:")
     for f in sorted(out.iterdir()):

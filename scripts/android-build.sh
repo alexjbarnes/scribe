@@ -118,7 +118,7 @@ fi
 # ── Step 2: Build sherpa-onnx native libraries ──
 
 SHERPA_ONNX_CACHE="$REPO_ROOT/.android-deps/sherpa-onnx"
-SHERPA_ONNX_LIB_DIR="$SHERPA_ONNX_CACHE/lib"
+SHERPA_ONNX_LIB_DIR="$SHERPA_ONNX_CACHE/install/lib"
 
 if [ -d "$SHERPA_ONNX_LIB_DIR" ] && [ -f "$SHERPA_ONNX_LIB_DIR/libsherpa-onnx-c-api.a" ]; then
     info "Using cached sherpa-onnx libraries from $SHERPA_ONNX_LIB_DIR"
@@ -162,7 +162,7 @@ else
         -DSHERPA_ONNX_ENABLE_CHECK=OFF \
         -DSHERPA_ONNX_ENABLE_PORTAUDIO=OFF \
         -DSHERPA_ONNX_ENABLE_WEBSOCKET=OFF \
-        -DCMAKE_INSTALL_PREFIX="$SHERPA_ONNX_CACHE"
+        -DCMAKE_INSTALL_PREFIX="$SHERPA_ONNX_CACHE/install"
 
     cmake --build "$SHERPA_BUILD" --config Release -j "$(nproc 2>/dev/null || echo 4)"
     cmake --install "$SHERPA_BUILD"
@@ -170,7 +170,7 @@ else
     if [ ! -f "$SHERPA_ONNX_LIB_DIR/libsherpa-onnx-c-api.a" ]; then
         # Some builds put libs in lib64 or other locations
         for candidate in \
-            "$SHERPA_ONNX_CACHE/lib64" \
+            "$SHERPA_ONNX_CACHE/install/lib64" \
             "$SHERPA_BUILD/lib" \
             "$SHERPA_BUILD/lib64"; do
             if [ -f "$candidate/libsherpa-onnx-c-api.a" ]; then
@@ -198,7 +198,7 @@ export SHERPA_ONNX_LIB_DIR
 # shared libonnxruntime.so for the ort Rust crate (load-dynamic mode) to
 # dlopen at runtime. ORT publishes a pre-built Android AAR for each release.
 
-ORT_VERSION="1.23.2"
+ORT_VERSION="1.24.2"
 ORT_CACHE="$REPO_ROOT/.android-deps/ort"
 ORT_LIB_DIR="$ORT_CACHE/arm64-v8a"
 ORT_LIB="$ORT_LIB_DIR/libonnxruntime.so"
@@ -209,7 +209,7 @@ else
     info "Downloading ORT v${ORT_VERSION} Android library..."
     mkdir -p "$ORT_LIB_DIR"
 
-    ORT_AAR_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-android-${ORT_VERSION}.aar"
+    ORT_AAR_URL="https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/${ORT_VERSION}/onnxruntime-android-${ORT_VERSION}.aar"
     ORT_AAR="$ORT_CACHE/onnxruntime-android.aar"
 
     check_cmd curl "Install curl: apt install curl"
@@ -266,7 +266,8 @@ else
 
         info "Installing grammar model Python deps..."
         "$PIP" install -q --upgrade pip
-        "$PIP" install -q huggingface_hub transformers torch onnx onnxruntime
+        # CPU-only torch — GPU build pulls in 2-3GB of NVIDIA CUDA libraries we don't need.
+        "$PIP" install -q huggingface_hub transformers "optimum[onnxruntime]"
 
         info "Exporting CoLA router (pszemraj/electra-small-discriminator-CoLA)..."
         "$PYTHON" "$SCRIPT_DIR/export_cola_onnx.py" --output-dir "$GRAMMAR_DIR"

@@ -48,7 +48,7 @@ setup:
     VENV_DIR="{{repo_root}}/.grammar-venv"
     [ -d "$VENV_DIR" ] || python3 -m venv "$VENV_DIR"
     "$VENV_DIR/bin/pip" install -q --upgrade pip
-    "$VENV_DIR/bin/pip" install -q huggingface_hub transformers torch onnx onnxruntime
+    "$VENV_DIR/bin/pip" install -q huggingface_hub transformers "optimum[onnxruntime]"
     echo "==> Exporting CoLA router..."
     "$VENV_DIR/bin/python" "{{repo_root}}/scripts/export_cola_onnx.py" --output-dir "$GRAMMAR_DIR"
     echo "==> Downloading T5 corrector..."
