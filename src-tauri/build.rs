@@ -16,5 +16,28 @@ fn main() {
         // but the ONNX Runtime static lib doesn't include the NNAPI provider, leaving a
         // GLOBAL UNDEFINED symbol that crashes the Android dynamic linker on arm64.
         cc::Build::new().file("stubs.c").compile("stubs");
+
+        // Copy libonnxruntime.so into jniLibs so it gets packaged in the APK.
+        // The ort Rust crate uses load-dynamic (dlopen at runtime) — it does not
+        // link ORT at compile time, so this .so must be present on the device.
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+        let repo_root = std::path::PathBuf::from(&manifest_dir)
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let ort_so = repo_root.join(".android-deps/ort/arm64-v8a/libonnxruntime.so");
+        let jni_libs = std::path::PathBuf::from(&manifest_dir)
+            .join("gen/android/app/src/main/jniLibs/arm64-v8a");
+
+        println!("cargo:rerun-if-changed={}", ort_so.display());
+
+        if ort_so.exists() {
+            std::fs::create_dir_all(&jni_libs).ok();
+            if let Err(e) = std::fs::copy(&ort_so, jni_libs.join("libonnxruntime.so")) {
+                println!("cargo:warning=Failed to copy libonnxruntime.so: {e}");
+            }
+        } else {
+            println!("cargo:warning=libonnxruntime.so not found at {} — run scripts/android-build.sh --setup-only", ort_so.display());
+        }
     }
 }

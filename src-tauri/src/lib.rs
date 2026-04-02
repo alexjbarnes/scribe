@@ -306,6 +306,7 @@ pub fn run() {
                 return Ok(());
             }
             history::History::init_global();
+            postprocess::grammar_neural::init_global();
 
             debug_log::set_app_handle(app.handle().clone());
 

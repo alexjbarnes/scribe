@@ -192,6 +192,40 @@ fi
 
 export SHERPA_ONNX_LIB_DIR
 
+# ── Step 2b: Download ORT Android shared library ──
+#
+# sherpa-onnx links ORT statically into its own archive. We need a separate
+# shared libonnxruntime.so for the ort Rust crate (load-dynamic mode) to
+# dlopen at runtime. ORT publishes a pre-built Android AAR for each release.
+
+ORT_VERSION="1.23.2"
+ORT_CACHE="$REPO_ROOT/.android-deps/ort"
+ORT_LIB_DIR="$ORT_CACHE/arm64-v8a"
+ORT_LIB="$ORT_LIB_DIR/libonnxruntime.so"
+
+if [ -f "$ORT_LIB" ]; then
+    info "Using cached ORT library at $ORT_LIB"
+else
+    info "Downloading ORT v${ORT_VERSION} Android library..."
+    mkdir -p "$ORT_LIB_DIR"
+
+    ORT_AAR_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-android-${ORT_VERSION}.aar"
+    ORT_AAR="$ORT_CACHE/onnxruntime-android.aar"
+
+    check_cmd curl "Install curl: apt install curl"
+    check_cmd unzip "Install unzip: apt install unzip"
+
+    curl -fsSL -o "$ORT_AAR" "$ORT_AAR_URL"
+    # AAR is a zip file — extract the arm64-v8a .so
+    unzip -p "$ORT_AAR" "jni/arm64-v8a/libonnxruntime.so" > "$ORT_LIB"
+    rm "$ORT_AAR"
+
+    [ -s "$ORT_LIB" ] || die "Failed to extract libonnxruntime.so from ORT AAR"
+    info "ORT library cached at $ORT_LIB ($(du -sh "$ORT_LIB" | cut -f1))"
+fi
+
+export ORT_LIB_DIR
+
 # ── Step 3: Initialize Tauri Android project ──
 
 if [ ! -d "$ANDROID_PROJECT" ]; then

@@ -55,6 +55,7 @@ pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeI
         return JNI_FALSE;
     }
     crate::history::History::init_global();
+    crate::postprocess::grammar_neural::init_global();
 
     let mgr = ModelManager::global();
 

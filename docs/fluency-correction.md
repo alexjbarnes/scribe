@@ -448,11 +448,10 @@ electra-small-CoLA  (~4ms, single forward pass)
         └── P(acceptable) < 0.80 ──► route to corrector
                                             │
                                             ▼
-                               Unbabel/gec-t5_small  (~65ms est. ONNX INT8)
-                                 or t5-efficient-tiny  (~50ms ONNX INT8)
+                               t5-efficient-tiny  (~50ms ONNX INT8)
                                             │
                                             ▼
-                                      Final output  (~55-70ms total)
+                                      Final output  (~55ms total)
 ```
 
 Router: `pszemraj/electra-small-discriminator-CoLA` at threshold=0.75
@@ -461,10 +460,11 @@ Router: `pszemraj/electra-small-discriminator-CoLA` at threshold=0.75
 - Same accuracy as deberta-v3-xsmall at 6x lower latency and 5x smaller
 - 0.75 threshold sits in the center of the natural gap [0.684, 0.803] for maximum margin
 
-Corrector: `Unbabel/gec-t5_small` (ONNX export confirmed, ~143MB INT8)
-- Trained on real annotated GEC data — more precise, fewer over-corrections (3/8 vs 4/8)
-- ONNX export confirmed working via `scripts/export_gec_t5_onnx.py` with Python 3.14 patch
-- Fallback: `visheratin/t5-efficient-tiny` (~44MB INT8, ONNX pre-published) if size is a constraint
+Corrector: `visheratin/t5-efficient-tiny` (~44MB INT8, ONNX pre-published)
+- Pre-published quantized ONNX weights — no export step required
+- 4/8 over-corrections vs 3/8 for gec-t5_small — one extra over-correction not worth 99MB
+- MIT license
+- If tiny proves insufficient after real-world testing, `Unbabel/gec-t5_small` is the upgrade path (~143MB INT8, ONNX export confirmed via `scripts/export_gec_t5_onnx.py` with Python 3.14 patch)
 - t5-efficient-mini is not recommended — 6/8 over-corrections, actively worse than tiny on clean text
 
 DistilGPT2 perplexity scoring is not recommended as a router. It cannot distinguish rare technical vocabulary from genuine errors, resulting in TN=0 at any usable threshold.

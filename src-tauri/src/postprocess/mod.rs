@@ -2,11 +2,13 @@
 //!
 //! 1. Filler word removal (rule-based, ~1ms)
 //! 2. Inverse text normalization (rule-based, ~5ms)
-//! 3. Grammar correction (nlprule / LanguageTool, ~5-10ms)
-//! 4. SymSpell spell correction (edit-distance, <1ms)
+//! 3. User vocab substitution (rule-based, <1ms)
+//! 4. Grammar correction — neural (CoLA+T5, ~4-65ms) if models present,
+//!    otherwise nlprule (LanguageTool rules, ~5-10ms)
 
 mod filler;
 mod grammar;
+pub mod grammar_neural;
 mod itn;
 mod spelling;
 pub mod vocab;
@@ -126,16 +128,27 @@ pub fn postprocess(text: &str) -> PipelineResult {
         duration_ms: ms,
     });
 
-    // Stage 4: Grammar correction (nlprule / LanguageTool rules)
-    let pipeline = get_pipeline();
+    // Stage 4: Grammar correction.
+    // Neural path (CoLA router + T5 corrector) when models are loaded;
+    // nlprule (LanguageTool rules) otherwise.
     let t = Instant::now();
     let prev = s.clone();
-    s = pipeline.grammar.correct(&s);
+    let grammar_label;
+    if let Some(neural) = grammar_neural::global() {
+        if neural.needs_correction(&s) {
+            s = neural.correct(&s);
+        }
+        grammar_label = "Grammar (neural)";
+    } else {
+        let pipeline = get_pipeline();
+        s = pipeline.grammar.correct(&s);
+        grammar_label = "Grammar (nlprule)";
+    }
     let changed = s != prev;
     let ms = t.elapsed().as_millis() as u64;
-    log::debug!("Pipeline stage 4 (Grammar): {ms}ms changed={changed}");
+    log::debug!("Pipeline stage 4 ({grammar_label}): {ms}ms changed={changed}");
     stages.push(PipelineStage {
-        name: "Grammar".to_string(),
+        name: grammar_label.to_string(),
         text: s.clone(),
         changed,
         duration_ms: ms,
