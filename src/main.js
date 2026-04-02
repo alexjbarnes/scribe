@@ -20,6 +20,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // Refresh data when switching to relevant tabs
     if (btn.dataset.tab === 'tab-history') loadHistory();
     if (btn.dataset.tab === 'tab-models') loadModels();
+    if (btn.dataset.tab === 'general') loadVocab();
   });
 });
 
@@ -542,6 +543,69 @@ clearEnrollBtn.addEventListener('click', async () => {
   }
 });
 
+// ── Vocabulary tab ──
+
+async function loadVocab() {
+  const entries = await invoke('get_vocab_entries');
+  const list = document.getElementById('vocab-list');
+  const empty = document.getElementById('vocab-empty');
+  list.innerHTML = '';
+  if (entries.length === 0) {
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  for (const entry of entries) {
+    const row = document.createElement('div');
+    row.className = 'flex items-center justify-between gap-3 text-sm';
+    row.innerHTML = `
+      <span class="font-mono text-on-surface-variant">${escapeHtml(entry.from)}</span>
+      <span class="text-on-surface-variant/40 text-xs">→</span>
+      <span class="font-mono text-on-surface flex-1">${escapeHtml(entry.to)}</span>
+      <button class="vocab-del-btn text-on-surface-variant hover:text-error transition-colors cursor-pointer p-1 rounded-lg hover:bg-error/10" data-from="${escapeHtml(entry.from)}" title="Remove">
+        <span class="material-symbols-outlined text-base">delete</span>
+      </button>`;
+    list.appendChild(row);
+  }
+  list.querySelectorAll('.vocab-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      try {
+        await invoke('remove_vocab_entry', { from: btn.dataset.from });
+        await loadVocab();
+      } catch (err) {
+        showToast('Failed to remove: ' + err);
+      }
+    });
+  });
+}
+
+document.getElementById('vocab-add-btn').addEventListener('click', async () => {
+  const fromEl = document.getElementById('vocab-from');
+  const toEl = document.getElementById('vocab-to');
+  const from = fromEl.value.trim();
+  const to = toEl.value.trim();
+  if (!from || !to) {
+    showToast('Both fields are required');
+    return;
+  }
+  try {
+    await invoke('add_vocab_entry', { from, to });
+    fromEl.value = '';
+    toEl.value = '';
+    await loadVocab();
+  } catch (err) {
+    showToast('Failed to add: ' + err);
+  }
+});
+
+document.getElementById('vocab-from').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('vocab-to').focus();
+});
+
+document.getElementById('vocab-to').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('vocab-add-btn').click();
+});
+
 // ── Debug tab ──
 
 const logOutput = document.getElementById('log-output');
@@ -579,6 +643,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadAudioDevices();
   await loadConfig();
   await loadEnrollmentStatus();
+  await loadVocab();
 
   document.getElementById('save-config').addEventListener('click', saveConfig);
 });

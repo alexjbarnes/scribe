@@ -261,6 +261,21 @@ fn delete_model(id: String) -> Result<(), String> {
     models::ModelManager::global().delete(&id)
 }
 
+#[tauri::command]
+fn get_vocab_entries() -> Vec<postprocess::vocab::VocabEntry> {
+    postprocess::vocab::get_entries()
+}
+
+#[tauri::command]
+fn add_vocab_entry(from: String, to: String) -> Result<(), String> {
+    postprocess::vocab::add_entry(from, to)
+}
+
+#[tauri::command]
+fn remove_vocab_entry(from: String) -> Result<(), String> {
+    postprocess::vocab::remove_entry(&from)
+}
+
 /// Initialize the Engine in the background: VAD, recorder, transcriber,
 /// speaker verifier, then preload model + post-processing pipeline.
 /// Shared by both Tauri app and Android IME -- whichever starts first
@@ -539,6 +554,9 @@ pub fn run() {
             enroll_speaker,
             clear_speaker_enrollment,
             get_speaker_enrollment_status,
+            get_vocab_entries,
+            add_vocab_entry,
+            remove_vocab_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

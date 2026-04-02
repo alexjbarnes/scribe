@@ -9,6 +9,7 @@ mod filler;
 mod grammar;
 mod itn;
 mod spelling;
+pub mod vocab;
 
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -111,14 +112,28 @@ pub fn postprocess(text: &str) -> PipelineResult {
         duration_ms: ms,
     });
 
-    // Stage 3: Grammar correction (nlprule / LanguageTool rules)
+    // Stage 3: User vocab substitution
+    let t = Instant::now();
+    let prev = s.clone();
+    s = vocab::apply(&s);
+    let changed = s != prev;
+    let ms = t.elapsed().as_millis() as u64;
+    log::debug!("Pipeline stage 3 (Vocab): {ms}ms changed={changed}");
+    stages.push(PipelineStage {
+        name: "Vocab".to_string(),
+        text: s.clone(),
+        changed,
+        duration_ms: ms,
+    });
+
+    // Stage 4: Grammar correction (nlprule / LanguageTool rules)
     let pipeline = get_pipeline();
     let t = Instant::now();
     let prev = s.clone();
     s = pipeline.grammar.correct(&s);
     let changed = s != prev;
     let ms = t.elapsed().as_millis() as u64;
-    log::debug!("Pipeline stage 3 (Grammar): {ms}ms changed={changed}");
+    log::debug!("Pipeline stage 4 (Grammar): {ms}ms changed={changed}");
     stages.push(PipelineStage {
         name: "Grammar".to_string(),
         text: s.clone(),

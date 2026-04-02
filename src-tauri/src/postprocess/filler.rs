@@ -8,8 +8,6 @@
 const FILLER_PHRASES: &[&str] = &[
     "you know",
     "i mean",
-    "sort of",
-    "kind of",
     "you see",
     "i guess",
     "i think um",
@@ -115,10 +113,10 @@ mod tests {
     #[test]
     fn preserves_legitimate_words() {
         assert_eq!(remove_fillers("I mean the river"), "the river");
-        assert_eq!(
-            remove_fillers("hello world"),
-            "hello world"
-        );
+        assert_eq!(remove_fillers("hello world"), "hello world");
+        // "sort of" and "kind of" are not fillers — they have legitimate uses
+        assert_eq!(remove_fillers("it's sort of complicated"), "it's sort of complicated");
+        assert_eq!(remove_fillers("kind of a big deal"), "kind of a big deal");
     }
 
     #[test]
