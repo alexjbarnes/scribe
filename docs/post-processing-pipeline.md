@@ -224,7 +224,7 @@ Cons:
 - Check if gotutiyan publishes a DistilBERT (66M param) variant, which would halve size and latency
 - Consider training a custom GECToR on DistilBERT with the MIT-licensed training code
 - The Unbabel/gec-t5_small (60M params, Apache-2.0) is permissively licensed but seq2seq, so too slow
-- Microsoft's EdgeFormer (11M params) is the right architecture but weights are not public
+- Microsoft's EdgeFormer (11M params) is the right architecture but the checkpoint is now inaccessible (blob storage returns 403, April 2026)
 
 ## Future: broader grammar/correction options
 
@@ -238,7 +238,7 @@ Researched March 2026. Survey of all approaches for improving post-processing be
 | Custom Harper rules for ASR | 0 | <1ms | Targeted | Low |
 | SymSpell spell correction | ~5MB dict | <1ms | Spell-only | Low |
 | sherpa-onnx punctuation model | 7.1MB INT8 | ~10-20ms | Good punct/case | Low-Medium |
-| EdgeFormer (Microsoft) | ~11MB INT8 | <100ms | F0.5=52.7 CoNLL-14 | High |
+| EdgeFormer (Microsoft) | ~11MB INT8 | <100ms | F0.5=52.7 CoNLL-14 | N/A — checkpoint inaccessible |
 | GECToR + MobileBERT | ~7MB INT8 | ~40-80ms est. | Unknown (no pretrained) | Very High |
 | GECToR + RoBERTa-base | ~120MB INT8 | ~75-160ms | High | Medium |
 | T5-small grammar | ~140MB INT8 | 100-300ms | Moderate | Medium |
@@ -268,13 +268,12 @@ Available at: https://github.com/k2-fsa/sherpa-onnx/releases/tag/punctuation-mod
 
 ### Phase 3: neural grammar correction
 
-**EdgeFormer (most promising under 50MB).** Microsoft's on-device grammar model, powers Microsoft Editor:
+**EdgeFormer — inaccessible as of April 2026.** Microsoft's on-device grammar model, powers Microsoft Editor:
 - 11M params (12 encoder layers, 2 decoder layers, 512 hidden, 8 heads)
-- ~11MB on disk INT8, 42MB peak RAM
-- <100ms latency per sentence
-- Open source checkpoint at microsoft/unilm/edgelm
+- ~11MB on disk INT8, 42MB peak RAM, <100ms latency, MIT license
+- F0.5=52.7 on CoNLL-14
 
-The catch: ONNX export from the public fairseq checkpoint is poorly documented. No evidence of anyone running it on Android ARM64. Would integrate via the `ort` crate (pykeio/ort, wraps ONNX Runtime).
+The pretrained checkpoint on Microsoft blob storage now returns 403 Access Denied (GitHub issue unilm#1323). The ONNX release promised in September 2022 was never delivered. Cannot currently be obtained. Watch for re-release.
 
 **GECToR with smaller backbone.** The GECToR training code is Apache 2.0. The tagging architecture supports any encoder backbone:
 - MobileBERT: ~25M params, ~7MB INT8 (would need custom training)
@@ -287,10 +286,10 @@ The catch: ONNX export from the public fairseq checkpoint is poorly documented. 
 
 **Grammarly (2025):** T5-based model, <300MB memory, 297 tokens/sec on Apple M-series via MLX. Newer approach uses ~1B Llama variant at 210 tok/s. Both well beyond mobile size constraints.
 
-**Microsoft Editor (2022-present):** EdgeFormer at 11M params, <50MB RAM, <100ms, ONNX Runtime. Closest to feasible for Scribe. Ships encoder+decoder+beam search as a single ONNX graph.
+**Microsoft Editor (2022-present):** EdgeFormer at 11M params, <50MB RAM, <100ms, ONNX Runtime. Ships encoder+decoder+beam search as a single ONNX graph. Checkpoint now inaccessible — see above.
 
 ### Assessment
 
 Rule-based expansion (Harper + SymSpell) gets 80% of the value at 0% model cost. The sherpa-onnx punctuation model is a cheap add if chunk-boundary punctuation is a problem.
 
-For neural: EdgeFormer is the right target if the ONNX export can be made to work. Training a small GECToR is the fallback. Both require ML expertise and carry risk. T5 and LLM-based approaches are too large for mobile.
+For neural: EdgeFormer is now inaccessible. The current best path is the DistilGPT2 perplexity routing architecture — see `fluency-correction.md` for full research and the recommended two-stage approach.
