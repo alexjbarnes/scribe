@@ -98,6 +98,40 @@ function renderChunkTimings(chunks) {
   return html;
 }
 
+function lcsWordDiff(oldText, newText) {
+  const ow = oldText.trim().split(/\s+/).filter(w => w);
+  const nw = newText.trim().split(/\s+/).filter(w => w);
+  const m = ow.length, n = nw.length;
+  const dp = Array.from({length: m + 1}, () => new Int32Array(n + 1));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = ow[i-1] === nw[j-1]
+        ? dp[i-1][j-1] + 1
+        : Math.max(dp[i-1][j], dp[i][j-1]);
+    }
+  }
+  const ops = [];
+  let i = m, j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && ow[i-1] === nw[j-1]) {
+      ops.unshift({t: 'eq', w: nw[j-1]}); i--; j--;
+    } else if (j > 0 && (i === 0 || dp[i][j-1] >= dp[i-1][j])) {
+      ops.unshift({t: 'ins', w: nw[j-1]}); j--;
+    } else {
+      ops.unshift({t: 'del', w: ow[i-1]}); i--;
+    }
+  }
+  return ops;
+}
+
+function renderDiffHtml(oldText, newText) {
+  return lcsWordDiff(oldText, newText).map(op => {
+    if (op.t === 'eq') return escapeHtml(op.w);
+    if (op.t === 'ins') return `<span style="color:#fbbf24">${escapeHtml(op.w)}</span>`;
+    return `<span style="text-decoration:line-through;opacity:0.35">${escapeHtml(op.w)}</span>`;
+  }).join(' ');
+}
+
 function renderPipelineStages(stages, chunkTimings) {
   const hasStages = stages && stages.length > 1;
   const hasChunks = chunkTimings && chunkTimings.length > 0;
@@ -108,14 +142,20 @@ function renderPipelineStages(stages, chunkTimings) {
     html += renderChunkTimings(chunkTimings);
   }
   if (hasStages) {
-    for (const stage of stages) {
-      const dim = stage.changed === false ? ' opacity-40' : '';
-      const tag = stage.changed === false ? ' (no change)' : '';
+    for (let idx = 0; idx < stages.length; idx++) {
+      const stage = stages[idx];
+      const isBaseline = idx === 0;
+      const unchanged = !isBaseline && stage.changed === false;
+      const dim = unchanged ? ' opacity-40' : '';
+      const tag = unchanged ? ' (no change)' : '';
       const timing = stage.duration_ms ? ` ${stage.duration_ms}ms` : '';
+      const textHtml = (!isBaseline && stage.changed)
+        ? renderDiffHtml(stages[idx - 1].text, stage.text)
+        : escapeHtml(stage.text);
       html += `
         <div class="${dim}">
           <span class="text-[10px] font-semibold uppercase tracking-wider text-primary/70">${escapeHtml(stage.name)}${tag}${timing}</span>
-          <p class="text-xs text-on-surface-variant leading-relaxed mt-0.5 select-text">${escapeHtml(stage.text)}</p>
+          <p class="text-xs text-on-surface-variant leading-relaxed mt-0.5 select-text">${textHtml}</p>
         </div>`;
     }
   }
