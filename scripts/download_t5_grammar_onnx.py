@@ -33,8 +33,11 @@ def main():
     onnx_files = [f for f in all_files if f.endswith(".onnx")]
     print(f"ONNX files found: {onnx_files}")
 
+    def is_quant(f):
+        return "quant" in f.lower()  # matches both "quant" and "quantized"
+
     # Download encoder (quantized preferred, fallback to unquantized).
-    enc = next((f for f in onnx_files if "encoder" in f and "quantized" in f), None) \
+    enc = next((f for f in onnx_files if "encoder" in f and is_quant(f)), None) \
        or next((f for f in onnx_files if "encoder" in f), None)
     if enc:
         local = hf_hub_download(model_id, enc)
@@ -44,12 +47,12 @@ def main():
         print("ERROR: no encoder ONNX found")
         return
 
-    # Download decoder (no 'with_past', quantized preferred).
+    # Download decoder (no 'with_past'/'init', quantized preferred).
     dec = next(
-        (f for f in onnx_files if "decoder" in f and "with_past" not in f and "quantized" in f),
+        (f for f in onnx_files if "decoder" in f and "with_past" not in f and "init" not in f and is_quant(f)),
         None,
     ) or next(
-        (f for f in onnx_files if "decoder" in f and "with_past" not in f),
+        (f for f in onnx_files if "decoder" in f and "with_past" not in f and "init" not in f),
         None,
     )
     if dec:
