@@ -50,5 +50,57 @@
         "transcribe_ms": 678
       }
     ]
+  },
+  {
+    "timestamp": "2026-04-02T15:07:25.940761681+00:00",
+    "text": "Rather than that, what about splitting it into sentences and then sending each sentence through if they were larger?",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 1180,
+    "audio_duration_ms": 7514,
+    "postprocess_ms": 155,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "Rather than that, what about splitting it sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "Rather than that, what about splitting it sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "ITN",
+        "text": "Rather than that, what about splitting it sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Vocab",
+        "text": "Rather than that, what about splitting it sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "Rather than that, what about splitting it into sentences and then sending each sentence through if they were larger?",
+        "changed": true,
+        "duration_ms": 155
+      },
+      {
+        "name": "Cleanup",
+        "text": "Rather than that, what about splitting it into sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      {
+        "audio_ms": 6852,
+        "transcribe_ms": 1179
+      }
+    ]
   }
 ]
