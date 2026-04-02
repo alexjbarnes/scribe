@@ -66,8 +66,14 @@ mod bundled {
     /// P(acceptable) below this threshold → route to corrector.
     const ROUTER_THRESHOLD: f32 = 0.75;
 
-    /// Cap on output tokens (greedy decode loop limit).
-    const MAX_NEW_TOKENS: usize = 96;
+    /// Extra token headroom above encoder input length for the decode loop.
+    /// Output should be close to input length; 32 covers minor expansions.
+    const DECODE_HEADROOM: usize = 32;
+
+    /// Word count above which the corrector splits on sentence boundaries
+    /// before running T5. T5-tiny is unreliable on long multi-sentence input
+    /// and would truncate output when encoder length exceeds ~100 tokens.
+    const SENTENCE_SPLIT_THRESHOLD: usize = 30;
 
     static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
@@ -199,7 +205,49 @@ mod bundled {
             }
         }
 
+        /// Split on sentence boundaries: `. `, `! `, `? ` followed by an
+        /// uppercase letter. Keeps punctuation with its sentence.
+        fn split_sentences(text: &str) -> Vec<String> {
+            let mut sentences = Vec::new();
+            let mut buf = String::new();
+            let mut chars = text.char_indices().peekable();
+            while let Some((i, ch)) = chars.next() {
+                buf.push(ch);
+                if matches!(ch, '.' | '!' | '?') {
+                    let rest = &text[i + ch.len_utf8()..];
+                    let mut rc = rest.chars();
+                    if rc.next() == Some(' ') && rc.next().map_or(false, |c| c.is_uppercase()) {
+                        let s = buf.trim().to_string();
+                        if !s.is_empty() { sentences.push(s); }
+                        buf = String::new();
+                    }
+                }
+            }
+            let tail = buf.trim().to_string();
+            if !tail.is_empty() { sentences.push(tail); }
+            if sentences.is_empty() { sentences.push(text.trim().to_string()); }
+            sentences
+        }
+
         fn correct_inner(&self, text: &str) -> Result<String, String> {
+            // For long inputs, split on sentence boundaries and correct each
+            // sentence individually. This avoids T5 output truncation and keeps
+            // each pass within the model's reliable operating range.
+            // Falls through to the single-pass path if splitting yields only
+            // one piece (e.g. a single very long run-on sentence).
+            if text.split_whitespace().count() > SENTENCE_SPLIT_THRESHOLD {
+                let sentences = Self::split_sentences(text);
+                if sentences.len() > 1 {
+                    let mut parts: Vec<String> = Vec::with_capacity(sentences.len());
+                    for s in &sentences {
+                        match self.correct_inner(s.as_str()) {
+                            Ok(c) if !c.trim().is_empty() => parts.push(c),
+                            _ => parts.push(s.clone()),
+                        }
+                    }
+                    return Ok(parts.join(" "));
+                }
+            }
             let enc = self
                 .t5_tokenizer
                 .encode(text, true)
@@ -255,8 +303,9 @@ mod bundled {
             encoder_mask: &Array2<i64>,
         ) -> Result<Vec<u32>, String> {
             let mut tokens: Vec<i64> = vec![self.decoder_start_token_id];
-            // Cap at 2× encoder input length to avoid runaway generation.
-            let limit = MAX_NEW_TOKENS.min(hidden.shape()[1] * 2 + 16);
+            // Allow input length + headroom. Grammar correction output should
+            // be close in length to the input; 2× would allow runaway generation.
+            let limit = hidden.shape()[1] + DECODE_HEADROOM;
 
             for _ in 0..limit {
                 let seq = tokens.len();

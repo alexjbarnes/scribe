@@ -141,10 +141,11 @@ pub fn postprocess(text: &str) -> PipelineResult {
     // nlprule (LanguageTool rules) otherwise.
     //
     // Skipped for short texts: fragments and replacement phrases (e.g. two
-    // words dictated over a selection) score very low on CoLA and get routed
-    // to T5, which adds unwanted content. Rule-based nlprule has the same
-    // problem with fragments. Five words is the minimum for a meaningful
-    // correction.
+    // words dictated over a selection) score very low on the grammar router
+    // and get routed to T5, which adds unwanted content.
+    //
+    // Long texts are handled by the corrector splitting on sentence boundaries
+    // and correcting each sentence individually.
     //
     // catch_unwind guards against any Rust panic (e.g., from ORT internals
     // or nlprule deserialization) crossing a JNI boundary and aborting the
