@@ -1,6 +1,7 @@
 # Verba build automation
 #
 # Usage:
+#   just setup        # first-time setup: grammar models (desktop)
 #   just apk          # build debug APK
 #   just apk-release   # build release APK
 #   just test          # run Rust tests
@@ -28,6 +29,30 @@ export SHERPA_ONNX_LIB_DIR := sherpa_libs
 export JAVA_HOME := env("JAVA_HOME", "/usr")
 
 # ── Recipes ──
+
+# First-time desktop setup: generate and embed grammar models
+setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    GRAMMAR_DIR="{{tauri_dir}}/data/grammar"
+    FILES=(cola_model_quantized.onnx cola_tokenizer.json encoder_model_quantized.onnx decoder_model_quantized.onnx t5_tokenizer.json)
+    complete=true
+    for f in "${FILES[@]}"; do [ -f "$GRAMMAR_DIR/$f" ] || complete=false; done
+    if $complete; then
+        echo "==> Grammar models already present at $GRAMMAR_DIR"
+        exit 0
+    fi
+    echo "==> Preparing grammar models..."
+    mkdir -p "$GRAMMAR_DIR"
+    VENV_DIR="{{repo_root}}/.grammar-venv"
+    [ -d "$VENV_DIR" ] || python3 -m venv "$VENV_DIR"
+    "$VENV_DIR/bin/pip" install -q --upgrade pip
+    "$VENV_DIR/bin/pip" install -q huggingface_hub transformers torch onnx onnxruntime
+    echo "==> Exporting CoLA router..."
+    "$VENV_DIR/bin/python" "{{repo_root}}/scripts/export_cola_onnx.py" --output-dir "$GRAMMAR_DIR"
+    echo "==> Downloading T5 corrector..."
+    "$VENV_DIR/bin/python" "{{repo_root}}/scripts/download_t5_grammar_onnx.py" --output-dir "$GRAMMAR_DIR"
+    echo "==> Grammar models ready — rebuild to embed them"
 
 # Build debug APK (default)
 apk: _ensure-keystore (_build "debug")
