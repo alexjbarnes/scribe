@@ -226,6 +226,62 @@ fi
 
 export ORT_LIB_DIR
 
+# ── Step 2c: Prepare grammar models ──
+#
+# Generate and embed the CoLA router + T5 corrector ONNX files.
+# Placed in src-tauri/data/grammar/ so build.rs picks them up via include_bytes!.
+
+GRAMMAR_DIR="$TAURI_DIR/data/grammar"
+GRAMMAR_FILES=(
+    cola_model_quantized.onnx
+    cola_tokenizer.json
+    encoder_model_quantized.onnx
+    decoder_model_quantized.onnx
+    t5_tokenizer.json
+)
+
+grammar_complete() {
+    for f in "${GRAMMAR_FILES[@]}"; do
+        [ -f "$GRAMMAR_DIR/$f" ] || return 1
+    done
+    return 0
+}
+
+if grammar_complete; then
+    info "Using cached grammar models from $GRAMMAR_DIR"
+else
+    info "Preparing grammar models..."
+    mkdir -p "$GRAMMAR_DIR"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        warn "python3 not found — grammar neural correction will not be bundled (nlprule fallback active)"
+    else
+        # Install Python deps quietly into a local venv to avoid polluting system Python.
+        VENV_DIR="$REPO_ROOT/.android-deps/grammar-venv"
+        if [ ! -d "$VENV_DIR" ]; then
+            python3 -m venv "$VENV_DIR"
+        fi
+        PIP="$VENV_DIR/bin/pip"
+        PYTHON="$VENV_DIR/bin/python"
+
+        info "Installing grammar model Python deps..."
+        "$PIP" install -q --upgrade pip
+        "$PIP" install -q huggingface_hub transformers torch onnx onnxruntime
+
+        info "Exporting CoLA router (pszemraj/electra-small-discriminator-CoLA)..."
+        "$PYTHON" "$SCRIPT_DIR/export_cola_onnx.py" --output-dir "$GRAMMAR_DIR"
+
+        info "Downloading T5 corrector (visheratin/t5-efficient-tiny-grammar-correction)..."
+        "$PYTHON" "$SCRIPT_DIR/download_t5_grammar_onnx.py" --output-dir "$GRAMMAR_DIR"
+
+        if grammar_complete; then
+            info "Grammar models ready at $GRAMMAR_DIR"
+        else
+            warn "Grammar model setup incomplete — nlprule fallback will be active"
+        fi
+    fi
+fi
+
 # ── Step 3: Initialize Tauri Android project ──
 
 if [ ! -d "$ANDROID_PROJECT" ]; then
