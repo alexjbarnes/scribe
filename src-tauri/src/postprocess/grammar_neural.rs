@@ -181,7 +181,9 @@ mod bundled {
             log::debug!("Grammar neural: CoLA session.run done");
 
             // logits shape [1, 2]: index 0 = not_acceptable, 1 = acceptable
-            let logits = out["logits"]
+            let logits = out
+                .get("logits")
+                .ok_or_else(|| format!("CoLA: no 'logits' output; got: {:?}", out.keys().collect::<Vec<_>>()))?
                 .try_extract_array::<f32>()
                 .map_err(|e| format!("extract logits: {e}"))?;
             let l0 = logits[[0, 0]];
@@ -233,8 +235,18 @@ mod bundled {
                 ])
                 .map_err(|e| format!("encoder run: {e}"))?;
             log::debug!("Grammar neural: T5 encoder done");
+            log::debug!("T5 encoder outputs: {:?}", enc_out.keys().collect::<Vec<_>>());
 
-            let hidden: ArrayD<f32> = enc_out["last_hidden_state"]
+            // The output is typically 'last_hidden_state' but some exports use
+            // a different name. Fall back to the first (and only) output if needed.
+            let enc_hidden = enc_out
+                .get("last_hidden_state")
+                .or_else(|| {
+                    log::info!("T5 encoder: 'last_hidden_state' not found, using first output");
+                    Some(&enc_out[0])
+                })
+                .ok_or("T5 encoder produced no outputs")?;
+            let hidden: ArrayD<f32> = enc_hidden
                 .try_extract_array::<f32>()
                 .map_err(|e| format!("encoder hidden: {e}"))?
                 .into_owned();
@@ -288,7 +300,9 @@ mod bundled {
                     .map_err(|e| format!("decoder run: {e}"))?;
 
                 // logits shape [1, seq, vocab_size] — sample from last position
-                let logits = out["logits"]
+                let logits = out
+                    .get("logits")
+                    .ok_or_else(|| format!("decoder: no 'logits' output; got: {:?}", out.keys().collect::<Vec<_>>()))?
                     .try_extract_array::<f32>()
                     .map_err(|e| format!("logits: {e}"))?;
                 let next = logits
