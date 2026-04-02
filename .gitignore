@@ -40,6 +40,14 @@ debug.keystore
 core
 src-tauri/data/grammar/
 
+# Local test audio files
+*.mp3
+*.wav
+*.m4a
+
+# Stray icon drafts at repo root (real icons live in src-tauri/icons/)
+/icon*.png
+
 # Temp files from ONNX shape inference
 *.data
 sym_shape_infer_temp.onnx
