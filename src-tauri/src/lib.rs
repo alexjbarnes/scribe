@@ -11,6 +11,7 @@ mod postprocess;
 #[cfg(desktop)]
 mod sound;
 mod recorder;
+mod snippets;
 mod transcribe;
 pub mod vad;
 #[cfg(target_os = "android")]
@@ -218,6 +219,35 @@ fn remove_vocab_entry(from: String) -> Result<(), String> {
     postprocess::vocab::remove_entry(&from)
 }
 
+#[tauri::command]
+fn list_snippets() -> Vec<snippets::Snippet> {
+    snippets::SnippetManager::global().list()
+}
+
+#[tauri::command]
+fn save_snippet(trigger: String, body: String) -> Result<snippets::Snippet, String> {
+    if trigger.trim().is_empty() {
+        return Err("trigger cannot be empty".into());
+    }
+    if body.trim().is_empty() {
+        return Err("body cannot be empty".into());
+    }
+    Ok(snippets::SnippetManager::global().add(trigger, body))
+}
+
+#[tauri::command]
+fn delete_snippet(id: String) -> Result<(), String> {
+    snippets::SnippetManager::global().delete(&id)
+}
+
+#[tauri::command]
+fn add_snippet_trigger(id: String, trigger: String) -> Result<(), String> {
+    if trigger.trim().is_empty() {
+        return Err("trigger cannot be empty".into());
+    }
+    snippets::SnippetManager::global().add_trigger(&id, trigger)
+}
+
 /// Initialize the Engine in the background: VAD, recorder, transcriber,
 /// then preload model + post-processing pipeline.
 /// Shared by both Tauri app and Android IME -- whichever starts first
@@ -323,6 +353,7 @@ pub fn run() {
                 return Ok(());
             }
             history::History::init_global();
+            snippets::SnippetManager::init_global();
             // Load neural grammar models on a background thread so the UI
             // stays responsive during startup.
             std::thread::Builder::new()
@@ -433,6 +464,103 @@ pub fn run() {
                     }
                 })?;
 
+                // Alt+S: press to record a snippet trigger, release to look up
+                // and paste the matching snippet body. If no snippet matches,
+                // emits `snippet-no-match` so the frontend can show a picker.
+                let snippet_shortcut = Shortcut::new(Some(Modifiers::ALT), Code::KeyS);
+                let app_handle_s = app.handle().clone();
+                let captured_target_s: std::sync::Mutex<Option<paste::PasteTarget>> = std::sync::Mutex::new(None);
+                app.global_shortcut().on_shortcut(snippet_shortcut, move |_app, _shortcut, event| {
+                    let state = app_handle_s.state::<AppState>();
+                    match event.state {
+                        ShortcutState::Pressed => {
+                            if state.recording.load(Ordering::SeqCst) {
+                                return;
+                            }
+                            *captured_target_s.lock().unwrap() = paste::capture_frontmost_app();
+                            let started = engine::with(|eng| eng.start_streaming());
+                            match started {
+                                Some(Ok(())) => {
+                                    state.recording.store(true, Ordering::SeqCst);
+                                    sound::play_start();
+                                    let _ = app_handle_s.emit("dictation-state", "recording");
+                                    log::info!("Snippet shortcut: recording started");
+                                }
+                                Some(Err(e)) => {
+                                    log::error!("Snippet shortcut: failed to start: {e}");
+                                    let _ = app_handle_s.emit("dictation-error", e.as_str());
+                                }
+                                None => {
+                                    log::warn!("Snippet shortcut: engine not ready");
+                                    let _ = app_handle_s.emit("dictation-error", "Engine not ready. Wait for model to load.");
+                                }
+                            }
+                        }
+                        ShortcutState::Released => {
+                            if !state.recording.swap(false, Ordering::SeqCst) {
+                                return;
+                            }
+                            sound::play_stop();
+                            let _ = app_handle_s.emit("dictation-state", "processing");
+                            log::info!("Snippet shortcut: stopping recording");
+
+                            let target = captured_target_s.lock().unwrap().take();
+                            let deliver = delivery::DesktopDelivery { target };
+
+                            let pending = match engine::with(|eng| eng.stop_recording()) {
+                                Some(Ok(p)) => p,
+                                Some(Err(e)) => {
+                                    log::error!("Snippet shortcut: stop failed: {e}");
+                                    let _ = app_handle_s.emit("dictation-state", "idle");
+                                    return;
+                                }
+                                None => return,
+                            };
+
+                            let app_for_snippet = app_handle_s.clone();
+                            std::thread::Builder::new()
+                                .name("snippet-transcribe".into())
+                                .spawn(move || {
+                                    match pending.finalize() {
+                                        Some(result) => {
+                                            log::info!("Snippet shortcut: trigger text: \"{}\"", &result.text);
+                                            let mgr = snippets::SnippetManager::global();
+                                            if let Some(snippet) = mgr.find_match(&result.text) {
+                                                log::info!("Snippet matched: {}", &snippet.id);
+                                                use delivery::TextDelivery;
+                                                match deliver.deliver(&snippet.body) {
+                                                    Ok(_) => {}
+                                                    Err(e) => {
+                                                        log::error!("Snippet delivery failed: {e}");
+                                                        sound::play_error();
+                                                    }
+                                                }
+                                                let _ = app_for_snippet.emit("snippet-matched",
+                                                    serde_json::json!({
+                                                        "id": &snippet.id,
+                                                        "body": &snippet.body,
+                                                        "trigger_text": &result.text,
+                                                    }));
+                                            } else {
+                                                log::info!("Snippet shortcut: no match for \"{}\"", &result.text);
+                                                let _ = app_for_snippet.emit("snippet-no-match",
+                                                    serde_json::json!({
+                                                        "text": &result.text,
+                                                        "snippets": &mgr.list(),
+                                                    }));
+                                            }
+                                        }
+                                        None => {
+                                            log::warn!("Snippet shortcut: no text produced");
+                                        }
+                                    }
+                                    let _ = app_for_snippet.emit("dictation-state", "idle");
+                                })
+                                .ok();
+                        }
+                    }
+                })?;
+
                 // System tray
                 let settings =
                     MenuItem::with_id(app, "settings", "Settings...", true, None::<&str>)?;
@@ -489,6 +617,10 @@ pub fn run() {
             get_vocab_entries,
             add_vocab_entry,
             remove_vocab_entry,
+            list_snippets,
+            save_snippet,
+            delete_snippet,
+            add_snippet_trigger,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

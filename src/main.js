@@ -41,6 +41,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     if (btn.dataset.tab === 'tab-history') loadHistory();
     if (btn.dataset.tab === 'tab-models') loadModels();
     if (btn.dataset.tab === 'general') loadVocab();
+    if (btn.dataset.tab === 'snippets') loadSnippets();
   });
 });
 
@@ -507,12 +508,11 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
-  const cfg = {
-    device_index: parseInt(document.getElementById('audio-device').value, 10),
-    active_engine: 'whisper',
-    active_model_id: '',
-    haptic_feedback: document.getElementById('cfg-haptic').checked,
-  };
+  // Load current persisted config so we don't clobber fields not shown in UI
+  // (active_model_id, language, threads, output_dir).
+  const cfg = await invoke('get_config');
+  cfg.device_index = parseInt(document.getElementById('audio-device').value, 10);
+  cfg.haptic_feedback = document.getElementById('cfg-haptic').checked;
   try {
     await invoke('save_config', { cfg });
     const btn = document.getElementById('save-config');
@@ -587,6 +587,147 @@ document.getElementById('vocab-to').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') document.getElementById('vocab-add-btn').click();
 });
 
+// ── Snippets tab ──
+
+async function loadSnippets() {
+  const snippetList = document.getElementById('snippet-list');
+  const snippetEmpty = document.getElementById('snippet-empty');
+  let items;
+  try {
+    items = await invoke('list_snippets');
+  } catch (err) {
+    console.error('Failed to load snippets:', err);
+    return;
+  }
+
+  snippetList.innerHTML = '';
+  if (items.length === 0) {
+    snippetEmpty.classList.remove('hidden');
+    return;
+  }
+  snippetEmpty.classList.add('hidden');
+
+  for (const snippet of items) {
+    const row = document.createElement('div');
+    row.className = 'flex items-start justify-between gap-3 px-4 py-3';
+    row.innerHTML = `
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap gap-1 mb-1">
+          ${snippet.triggers.map(t =>
+            `<span class="text-xs font-mono bg-primary/10 text-primary px-2 py-0.5 rounded">${escapeHtml(t)}</span>`
+          ).join('')}
+        </div>
+        <p class="text-sm text-on-surface leading-relaxed">${escapeHtml(snippet.body)}</p>
+      </div>
+      <button class="snippet-del-btn shrink-0 text-on-surface-variant hover:text-error transition-colors cursor-pointer p-1.5 rounded-lg hover:bg-error/10 mt-0.5" data-id="${escapeHtml(snippet.id)}" title="Delete">
+        <span class="material-symbols-outlined text-base">delete</span>
+      </button>`;
+    snippetList.appendChild(row);
+  }
+
+  snippetList.querySelectorAll('.snippet-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!await showConfirm('Delete this snippet?')) return;
+      try {
+        await invoke('delete_snippet', { id: btn.dataset.id });
+        await loadSnippets();
+      } catch (err) {
+        showToast('Failed to delete: ' + err);
+      }
+    });
+  });
+}
+
+document.getElementById('snippet-add-btn').addEventListener('click', async () => {
+  const triggerEl = document.getElementById('snippet-trigger');
+  const bodyEl = document.getElementById('snippet-body');
+  const trigger = triggerEl.value.trim();
+  const body = bodyEl.value.trim();
+  if (!trigger || !body) {
+    showToast('Trigger and body are both required');
+    return;
+  }
+  try {
+    await invoke('save_snippet', { trigger, body });
+    triggerEl.value = '';
+    bodyEl.value = '';
+    await loadSnippets();
+  } catch (err) {
+    showToast('Failed to save snippet: ' + err);
+  }
+});
+
+document.getElementById('snippet-trigger').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('snippet-body').focus();
+});
+
+// Snippet picker (no-match flow with self-healing)
+
+let _snippetPickerSnippets = [];
+let _snippetPickerText = '';
+
+function showSnippetPicker(text, snippets) {
+  _snippetPickerText = text;
+  _snippetPickerSnippets = snippets;
+
+  document.getElementById('snippet-picker-text').textContent = `"${text}"`;
+  const list = document.getElementById('snippet-picker-list');
+  list.innerHTML = '';
+
+  if (snippets.length === 0) {
+    list.innerHTML = '<p class="text-xs text-on-surface-variant">No snippets defined yet.</p>';
+  } else {
+    for (const snippet of snippets) {
+      const btn = document.createElement('button');
+      btn.className = 'w-full text-left px-3 py-2 rounded-lg hover:bg-surface-container-highest transition-colors cursor-pointer';
+      btn.innerHTML = `
+        <p class="text-xs font-mono text-primary">${escapeHtml(snippet.triggers[0])}</p>
+        <p class="text-xs text-on-surface-variant truncate">${escapeHtml(snippet.body)}</p>`;
+      btn.addEventListener('click', () => selectSnippetFromPicker(snippet));
+      list.appendChild(btn);
+    }
+  }
+
+  const picker = document.getElementById('snippet-picker');
+  picker.classList.remove('hidden');
+  picker.classList.add('flex');
+}
+
+async function selectSnippetFromPicker(snippet) {
+  closeSnippetPicker();
+  // Register the misheard text as an additional trigger (self-healing)
+  try {
+    await invoke('add_snippet_trigger', { id: snippet.id, trigger: _snippetPickerText });
+  } catch (err) {
+    console.error('Failed to add trigger:', err);
+  }
+  // Copy snippet body to clipboard so user can paste it
+  try {
+    await navigator.clipboard.writeText(snippet.body);
+    showToast('Snippet copied to clipboard');
+  } catch (_) {
+    showToast('Snippet selected: ' + snippet.body.slice(0, 40));
+  }
+  await loadSnippets();
+}
+
+function closeSnippetPicker() {
+  const picker = document.getElementById('snippet-picker');
+  picker.classList.add('hidden');
+  picker.classList.remove('flex');
+}
+
+document.getElementById('snippet-picker-cancel').addEventListener('click', closeSnippetPicker);
+
+listen('snippet-matched', (event) => {
+  showToast(`Snippet: "${event.payload?.trigger_text}"`);
+});
+
+listen('snippet-no-match', (event) => {
+  const { text, snippets } = event.payload;
+  showSnippetPicker(text, snippets || []);
+});
+
 // ── Debug tab ──
 
 const logOutput = document.getElementById('log-output');
@@ -624,6 +765,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadAudioDevices();
   await loadConfig();
   await loadVocab();
+  await loadSnippets();
 
   document.getElementById('save-config').addEventListener('click', saveConfig);
 });
