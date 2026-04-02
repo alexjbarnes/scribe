@@ -1,10 +1,19 @@
 fn main() {
     tauri_build::build();
 
-    // Detect bundled grammar model files and emit cfg flag so grammar_neural.rs
-    // can use include_bytes! conditionally. If files are absent the feature
-    // compiles out and the pipeline falls back to nlprule at runtime.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+
+    // Grammar neural (CoLA router + T5 corrector) is desktop-only.
+    //
+    // On Android, sherpa-onnx links ORT statically into libverba_rs_lib.so.
+    // Grammar neural would load a second ORT instance (libonnxruntime.so) via
+    // dlopen. Two ORT copies in the same process corrupt shared global state
+    // (thread pools, NUMA topology) and cause the recorder thread to crash.
+    //
+    // Grammar neural will be re-enabled on Android once models are delivered
+    // via R2/download instead of embedded at compile time, allowing the
+    // ort dependency to be replaced by a standalone inference path.
     let grammar_dir = std::path::Path::new(&manifest_dir).join("data/grammar");
     let grammar_files = [
         "cola_model_quantized.onnx",
@@ -13,7 +22,8 @@ fn main() {
         "decoder_model_quantized.onnx",
         "t5_tokenizer.json",
     ];
-    let grammar_bundled = grammar_files.iter().all(|f| grammar_dir.join(f).exists());
+    let grammar_bundled = target_os != "android"
+        && grammar_files.iter().all(|f| grammar_dir.join(f).exists());
     if grammar_bundled {
         println!("cargo:rustc-cfg=grammar_neural_bundled");
     }
@@ -21,7 +31,6 @@ fn main() {
         println!("cargo:rerun-if-changed=data/grammar/{f}");
     }
 
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os == "android" {
         // sherpa-onnx / ONNX Runtime C++ code requires the C++ runtime.
         // Force the linker to record libc++_shared.so as a NEEDED dependency
@@ -37,27 +46,8 @@ fn main() {
         // GLOBAL UNDEFINED symbol that crashes the Android dynamic linker on arm64.
         cc::Build::new().file("stubs.c").compile("stubs");
 
-        // Copy libonnxruntime.so into jniLibs so it gets packaged in the APK.
-        // The ort Rust crate uses load-dynamic (dlopen at runtime) — it does not
-        // link ORT at compile time, so this .so must be present on the device.
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-        let repo_root = std::path::PathBuf::from(&manifest_dir)
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let ort_so = repo_root.join(".android-deps/ort/arm64-v8a/libonnxruntime.so");
-        let jni_libs = std::path::PathBuf::from(&manifest_dir)
-            .join("gen/android/app/src/main/jniLibs/arm64-v8a");
-
-        println!("cargo:rerun-if-changed={}", ort_so.display());
-
-        if ort_so.exists() {
-            std::fs::create_dir_all(&jni_libs).ok();
-            if let Err(e) = std::fs::copy(&ort_so, jni_libs.join("libonnxruntime.so")) {
-                println!("cargo:warning=Failed to copy libonnxruntime.so: {e}");
-            }
-        } else {
-            println!("cargo:warning=libonnxruntime.so not found at {} — run scripts/android-build.sh --setup-only", ort_so.display());
-        }
+        // libonnxruntime.so is NOT bundled in the Android APK.
+        // Grammar neural is desktop-only (see comment above), so ORT is never
+        // loaded at runtime on Android. Omitting it saves ~25MB in the APK.
     }
 }
