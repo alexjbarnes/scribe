@@ -1,1 +1,54 @@
-[]
+[
+  {
+    "timestamp": "2026-04-02T16:02:54.273980108+00:00",
+    "text": "Perfect, rebuild APK.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 679,
+    "audio_duration_ms": 3470,
+    "postprocess_ms": 130,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 2
+      },
+      {
+        "name": "ITN",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Vocab",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "Perfect, rebuild APK.",
+        "changed": true,
+        "duration_ms": 127
+      },
+      {
+        "name": "Cleanup",
+        "text": "Perfect, rebuild APK.",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      {
+        "audio_ms": 2532,
+        "transcribe_ms": 678
+      }
+    ]
+  }
+]
