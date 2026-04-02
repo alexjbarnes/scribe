@@ -128,6 +128,34 @@ mod bundled {
             })
         }
 
+        /// Route and correct text. Returns (corrected, min_router_score).
+        /// For long texts, routes and corrects each sentence independently so
+        /// T5 only runs on sentences that actually need it.
+        pub fn apply(&self, text: &str) -> (String, Option<f32>) {
+            if text.split_whitespace().count() > SENTENCE_SPLIT_THRESHOLD {
+                let sentences = Self::split_sentences(text);
+                if sentences.len() > 1 {
+                    let mut parts: Vec<String> = Vec::with_capacity(sentences.len());
+                    let mut min_score: Option<f32> = None;
+                    for s in &sentences {
+                        let (needs_correction, score) = self.route(s.as_str());
+                        if let Some(p) = score {
+                            min_score = Some(min_score.map_or(p, |m: f32| m.min(p)));
+                        }
+                        if needs_correction {
+                            parts.push(self.correct(s.as_str()));
+                        } else {
+                            parts.push(s.clone());
+                        }
+                    }
+                    return (parts.join(" "), min_score);
+                }
+            }
+            let (needs_correction, score) = self.route(text);
+            let corrected = if needs_correction { self.correct(text) } else { text.to_string() };
+            (corrected, score)
+        }
+
         /// Returns (needs_correction, score). Score is None on error.
         pub fn route(&self, text: &str) -> (bool, Option<f32>) {
             match self.p_acceptable(text) {
@@ -230,24 +258,6 @@ mod bundled {
         }
 
         fn correct_inner(&self, text: &str) -> Result<String, String> {
-            // For long inputs, split on sentence boundaries and correct each
-            // sentence individually. This avoids T5 output truncation and keeps
-            // each pass within the model's reliable operating range.
-            // Falls through to the single-pass path if splitting yields only
-            // one piece (e.g. a single very long run-on sentence).
-            if text.split_whitespace().count() > SENTENCE_SPLIT_THRESHOLD {
-                let sentences = Self::split_sentences(text);
-                if sentences.len() > 1 {
-                    let mut parts: Vec<String> = Vec::with_capacity(sentences.len());
-                    for s in &sentences {
-                        match self.correct_inner(s.as_str()) {
-                            Ok(c) if !c.trim().is_empty() => parts.push(c),
-                            _ => parts.push(s.clone()),
-                        }
-                    }
-                    return Ok(parts.join(" "));
-                }
-            }
             let enc = self
                 .t5_tokenizer
                 .encode(text, true)

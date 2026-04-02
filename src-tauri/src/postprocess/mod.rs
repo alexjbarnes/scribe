@@ -162,12 +162,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
     } else {
         let grammar_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Some(neural) = grammar_neural::global() {
-                let (needs_correction, score) = neural.route(&s);
-                let corrected = if needs_correction {
-                    neural.correct(&s)
-                } else {
-                    s.clone()
-                };
+                let (corrected, score) = neural.apply(&s);
                 (corrected, "Grammar (neural)", score)
             } else {
                 let pipeline = get_pipeline();
