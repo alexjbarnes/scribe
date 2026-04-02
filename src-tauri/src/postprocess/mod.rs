@@ -131,18 +131,36 @@ pub fn postprocess(text: &str) -> PipelineResult {
     // Stage 4: Grammar correction.
     // Neural path (CoLA router + T5 corrector) when models are loaded;
     // nlprule (LanguageTool rules) otherwise.
+    //
+    // catch_unwind guards against any Rust panic (e.g., from ORT internals
+    // or nlprule deserialization) crossing a JNI boundary and aborting the
+    // process on Android. Native crashes (SIGSEGV) are not caught here.
     let t = Instant::now();
     let prev = s.clone();
     let grammar_label;
-    if let Some(neural) = grammar_neural::global() {
-        if neural.needs_correction(&s) {
-            s = neural.correct(&s);
+    let grammar_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if let Some(neural) = grammar_neural::global() {
+            let corrected = if neural.needs_correction(&s) {
+                neural.correct(&s)
+            } else {
+                s.clone()
+            };
+            (corrected, "Grammar (neural)")
+        } else {
+            let pipeline = get_pipeline();
+            let corrected = pipeline.grammar.correct(&s);
+            (corrected, "Grammar (nlprule)")
         }
-        grammar_label = "Grammar (neural)";
-    } else {
-        let pipeline = get_pipeline();
-        s = pipeline.grammar.correct(&s);
-        grammar_label = "Grammar (nlprule)";
+    }));
+    match grammar_result {
+        Ok((corrected, label)) => {
+            s = corrected;
+            grammar_label = label;
+        }
+        Err(_) => {
+            log::error!("Pipeline stage 4: grammar correction panicked, skipping");
+            grammar_label = "Grammar (error)";
+        }
     }
     let changed = s != prev;
     let ms = t.elapsed().as_millis() as u64;
