@@ -157,8 +157,13 @@ pub fn postprocess(text: &str) -> PipelineResult {
             s = corrected;
             grammar_label = label;
         }
-        Err(_) => {
-            log::error!("Pipeline stage 4: grammar correction panicked, skipping");
+        Err(payload) => {
+            let msg = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                .unwrap_or("(non-string panic)");
+            log::error!("Pipeline stage 4: grammar correction panicked: {msg}");
             grammar_label = "Grammar (error)";
         }
     }
