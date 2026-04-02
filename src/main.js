@@ -185,41 +185,7 @@ function renderPipelineStages(stages, chunkTimings) {
 }
 
 function formatEntryForCopy(entry) {
-  const lines = [entry.text, ''];
-
-  const stats = [];
-  if (entry.timestamp) stats.push(formatTimestamp(entry.timestamp));
-  if (entry.audio_duration_ms) stats.push(formatAudioDuration(entry.audio_duration_ms));
-  if (entry.duration_ms) stats.push(formatDuration(entry.duration_ms) + ' to transcribe');
-  if (entry.postprocess_ms) stats.push(entry.postprocess_ms + 'ms postprocess');
-  const speed = formatSpeed(entry);
-  if (speed) stats.push(speed);
-  if (entry.model_id) stats.push(entry.model_id);
-  lines.push(stats.join(' | '));
-
-  if (entry.chunk_timings && entry.chunk_timings.length > 0) {
-    lines.push('', 'Chunks:');
-    let total = 0;
-    for (const c of entry.chunk_timings) {
-      total += c.transcribe_ms;
-      lines.push('  ' + c.transcribe_ms + 'ms (' + (c.audio_ms / 1000).toFixed(1) + 's audio)');
-    }
-    if (entry.chunk_timings.length > 1) {
-      lines.push('  Total: ' + total + 'ms');
-    }
-  }
-
-  if (entry.pipeline_stages && entry.pipeline_stages.length > 1) {
-    const totalLabel = entry.postprocess_ms ? ` (${entry.postprocess_ms}ms total)` : '';
-    lines.push('', 'Pipeline' + totalLabel + ':');
-    for (const stage of entry.pipeline_stages) {
-      const tag = stage.changed === false ? ' (no change)' : '';
-      const timing = stage.duration_ms ? ` [${stage.duration_ms}ms]` : '';
-      lines.push('  ' + stage.name + tag + timing + ': ' + stage.text);
-    }
-  }
-
-  return lines.join('\n');
+  return JSON.stringify(entry, null, 2);
 }
 
 function renderHistory(entries) {
