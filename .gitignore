@@ -38,3 +38,4 @@ debug.keystore
 
 # Core dumps
 core
+src-tauri/data/grammar/
