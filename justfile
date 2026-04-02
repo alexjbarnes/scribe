@@ -1,8 +1,9 @@
 # Verba build automation
 #
 # Usage:
-#   just setup        # first-time setup: grammar models (desktop)
-#   just apk          # build debug APK
+#   just setup         # first-time desktop setup: grammar models
+#   just setup-android # first-time Android setup: sherpa-onnx, ORT, grammar models
+#   just apk           # build debug APK
 #   just apk-release   # build release APK
 #   just test          # run Rust tests
 #   just check         # cargo check
@@ -54,6 +55,10 @@ setup:
     "$VENV_DIR/bin/python" "{{repo_root}}/scripts/download_t5_grammar_onnx.py" --output-dir "$GRAMMAR_DIR"
     echo "==> Grammar models ready — rebuild to embed them"
 
+# First-time Android setup: sherpa-onnx libs, ORT shared library, grammar models
+setup-android:
+    {{repo_root}}/scripts/android-build.sh --setup-only
+
 # Build debug APK (default)
 apk: _ensure-keystore (_build "debug")
 
@@ -83,7 +88,7 @@ _build profile: _tauri-build _strip _repackage _sign
 # Build via Tauri CLI (handles Rust compilation, frontend bundling, and Gradle packaging)
 _tauri-build:
     @echo "==> Building with Tauri CLI (arm64)..."
-    @test -f {{sherpa_libs}}/libsherpa-onnx-c-api.a || (echo "ERROR: sherpa-onnx libs not found at {{sherpa_libs}}" && echo "Run ./scripts/android-build.sh --setup-only first" && exit 1)
+    @test -f {{sherpa_libs}}/libsherpa-onnx-c-api.a || (echo "ERROR: sherpa-onnx libs not found at {{sherpa_libs}}" && echo "Run: just setup-android" && exit 1)
     cd {{repo_root}} && npx tauri android build --target aarch64 --apk
 
 # Strip debug symbols from .so to reduce APK size
