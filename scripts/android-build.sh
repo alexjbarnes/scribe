@@ -115,14 +115,75 @@ if ! npx tauri --version >/dev/null 2>&1; then
     die "Tauri CLI not found. Run: npm install @tauri-apps/cli"
 fi
 
-# ── Step 2: Build sherpa-onnx native libraries ──
+# ── Step 2: Download ORT Android shared library + headers ──
+#
+# sherpa-onnx cmake links against the pre-built libonnxruntime.so rather than
+# building ORT from source. ORT must be downloaded BEFORE sherpa-onnx so the
+# cmake invocation can find the headers and .so via SHERPA_ONNXRUNTIME_INCLUDE_DIR
+# and SHERPA_ONNXRUNTIME_LIB_DIR env vars (read by sherpa-onnx/cmake/onnxruntime.cmake).
+
+ORT_VERSION="1.24.2"
+ORT_CACHE="$REPO_ROOT/.android-deps/ort"
+ORT_LIB_DIR="$ORT_CACHE/arm64-v8a"
+ORT_LIB="$ORT_LIB_DIR/libonnxruntime.so"
+ORT_HEADERS_DIR="$ORT_CACHE/headers"
+
+if [ -f "$ORT_LIB" ] && [ -f "$ORT_HEADERS_DIR/onnxruntime_cxx_api.h" ]; then
+    info "Using cached ORT library and headers at $ORT_CACHE"
+else
+    info "Downloading ORT v${ORT_VERSION} Android library and headers..."
+    mkdir -p "$ORT_LIB_DIR" "$ORT_HEADERS_DIR"
+
+    ORT_AAR_URL="https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/${ORT_VERSION}/onnxruntime-android-${ORT_VERSION}.aar"
+    ORT_AAR="$ORT_CACHE/onnxruntime-android.aar"
+
+    check_cmd curl "Install curl: apt install curl"
+    check_cmd unzip "Install unzip: apt install unzip"
+
+    curl -fsSL -o "$ORT_AAR" "$ORT_AAR_URL"
+    # Extract the arm64-v8a shared library
+    unzip -p "$ORT_AAR" "jni/arm64-v8a/libonnxruntime.so" > "$ORT_LIB"
+    # Extract headers so sherpa-onnx can compile against shared ORT
+    unzip -o "$ORT_AAR" "headers/*" -d "$ORT_CACHE"
+    rm "$ORT_AAR"
+
+    [ -s "$ORT_LIB" ] || die "Failed to extract libonnxruntime.so from ORT AAR"
+    [ -f "$ORT_HEADERS_DIR/onnxruntime_cxx_api.h" ] || \
+        die "ORT headers not found at $ORT_HEADERS_DIR — check that 'headers/onnxruntime_cxx_api.h' exists in the AAR"
+    info "ORT cached at $ORT_CACHE ($(du -sh "$ORT_LIB" | cut -f1))"
+fi
+
+export ORT_LIB_DIR
+export SHERPA_ONNXRUNTIME_INCLUDE_DIR="$ORT_HEADERS_DIR"
+export SHERPA_ONNXRUNTIME_LIB_DIR="$ORT_LIB_DIR"
+
+# ── Step 3: Build sherpa-onnx native libraries ──
+#
+# sherpa-onnx/cmake/onnxruntime.cmake reads SHERPA_ONNXRUNTIME_INCLUDE_DIR and
+# SHERPA_ONNXRUNTIME_LIB_DIR (set above). It creates an IMPORTED SHARED target
+# for onnxruntime and installs libonnxruntime.so into install/lib/. No static ORT
+# is embedded — libsherpa-onnx-c-api.a has ORT symbols as external references
+# resolved at load time from libonnxruntime.so.
+#
+# The marker file .shared-ort distinguishes this shared-ORT build from the legacy
+# static-ORT build. If the cache exists without the marker, it is rebuilt.
 
 SHERPA_ONNX_CACHE="$REPO_ROOT/.android-deps/sherpa-onnx"
 SHERPA_ONNX_LIB_DIR="$SHERPA_ONNX_CACHE/install/lib"
+SHERPA_SHARED_ORT_MARKER="$SHERPA_ONNX_LIB_DIR/.shared-ort"
 
-if [ -d "$SHERPA_ONNX_LIB_DIR" ] && [ -f "$SHERPA_ONNX_LIB_DIR/libsherpa-onnx-c-api.a" ]; then
-    info "Using cached sherpa-onnx libraries from $SHERPA_ONNX_LIB_DIR"
+if [ -d "$SHERPA_ONNX_LIB_DIR" ] && \
+   [ -f "$SHERPA_ONNX_LIB_DIR/libsherpa-onnx-c-api.a" ] && \
+   [ -f "$SHERPA_SHARED_ORT_MARKER" ]; then
+    info "Using cached sherpa-onnx libraries (shared ORT) from $SHERPA_ONNX_LIB_DIR"
 else
+    if [ -d "$SHERPA_ONNX_LIB_DIR" ] && \
+       [ -f "$SHERPA_ONNX_LIB_DIR/libsherpa-onnx-c-api.a" ] && \
+       [ ! -f "$SHERPA_SHARED_ORT_MARKER" ]; then
+        info "Sherpa-onnx cache was built with static ORT — rebuilding with shared ORT..."
+        rm -rf "$SHERPA_ONNX_CACHE/install"
+    fi
+
     info "Building sherpa-onnx v${SHERPA_ONNX_VERSION} for Android arm64-v8a (this takes 10-15 minutes)..."
 
     SHERPA_SRC="$SHERPA_ONNX_CACHE/src"
@@ -141,7 +202,8 @@ else
             https://github.com/k2-fsa/sherpa-onnx.git "$SHERPA_SRC"
     fi
 
-    # CMake cross-compile
+    # CMake cross-compile. SHERPA_ONNXRUNTIME_INCLUDE_DIR / SHERPA_ONNXRUNTIME_LIB_DIR
+    # are exported above so sherpa-onnx cmake finds the pre-built ORT .so and headers.
     TOOLCHAIN="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
     [ -f "$TOOLCHAIN" ] || die "NDK toolchain not found at $TOOLCHAIN"
 
@@ -184,6 +246,22 @@ else
     [ -f "$SHERPA_ONNX_LIB_DIR/libsherpa-onnx-c-api.a" ] || \
         die "sherpa-onnx build succeeded but libsherpa-onnx-c-api.a not found in expected locations."
 
+    # Verify cmake install copied libonnxruntime.so (from SHERPA_ONNXRUNTIME_LIB_DIR)
+    [ -f "$SHERPA_ONNX_LIB_DIR/libonnxruntime.so" ] || \
+        die "libonnxruntime.so not found in $SHERPA_ONNX_LIB_DIR — cmake install may have failed"
+
+    # Create an empty stub libonnxruntime.a alongside libonnxruntime.so.
+    # sherpa-onnx-sys emits `static=onnxruntime` which expects a .a in SHERPA_ONNX_LIB_DIR.
+    # The stub satisfies that linker directive without embedding ORT code; the real ORT
+    # symbols are resolved from libonnxruntime.so via `dylib=onnxruntime` in build.rs.
+    NDK_CLANG="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android28-clang"
+    NDK_AR="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar"
+    echo 'typedef int _ort_stub_t;' > /tmp/_ort_stub.c
+    "$NDK_CLANG" -c /tmp/_ort_stub.c -o /tmp/_ort_stub.o
+    "$NDK_AR" crs "$SHERPA_ONNX_LIB_DIR/libonnxruntime.a" /tmp/_ort_stub.o
+    rm /tmp/_ort_stub.c /tmp/_ort_stub.o
+    touch "$SHERPA_SHARED_ORT_MARKER"
+
     info "sherpa-onnx libraries built and cached at $SHERPA_ONNX_LIB_DIR"
 
     # Clean build dir to save space (keep source for rebuilds)
@@ -192,41 +270,7 @@ fi
 
 export SHERPA_ONNX_LIB_DIR
 
-# ── Step 2b: Download ORT Android shared library ──
-#
-# sherpa-onnx links ORT statically into its own archive. We need a separate
-# shared libonnxruntime.so for the ort Rust crate (load-dynamic mode) to
-# dlopen at runtime. ORT publishes a pre-built Android AAR for each release.
-
-ORT_VERSION="1.24.2"
-ORT_CACHE="$REPO_ROOT/.android-deps/ort"
-ORT_LIB_DIR="$ORT_CACHE/arm64-v8a"
-ORT_LIB="$ORT_LIB_DIR/libonnxruntime.so"
-
-if [ -f "$ORT_LIB" ]; then
-    info "Using cached ORT library at $ORT_LIB"
-else
-    info "Downloading ORT v${ORT_VERSION} Android library..."
-    mkdir -p "$ORT_LIB_DIR"
-
-    ORT_AAR_URL="https://repo1.maven.org/maven2/com/microsoft/onnxruntime/onnxruntime-android/${ORT_VERSION}/onnxruntime-android-${ORT_VERSION}.aar"
-    ORT_AAR="$ORT_CACHE/onnxruntime-android.aar"
-
-    check_cmd curl "Install curl: apt install curl"
-    check_cmd unzip "Install unzip: apt install unzip"
-
-    curl -fsSL -o "$ORT_AAR" "$ORT_AAR_URL"
-    # AAR is a zip file — extract the arm64-v8a .so
-    unzip -p "$ORT_AAR" "jni/arm64-v8a/libonnxruntime.so" > "$ORT_LIB"
-    rm "$ORT_AAR"
-
-    [ -s "$ORT_LIB" ] || die "Failed to extract libonnxruntime.so from ORT AAR"
-    info "ORT library cached at $ORT_LIB ($(du -sh "$ORT_LIB" | cut -f1))"
-fi
-
-export ORT_LIB_DIR
-
-# ── Step 2c: Prepare grammar models ──
+# ── Step 4: Prepare grammar models ──
 #
 # Generate and embed the CoLA router + T5 corrector ONNX files.
 # Placed in src-tauri/data/grammar/ so build.rs picks them up via include_bytes!.
@@ -283,7 +327,7 @@ else
     fi
 fi
 
-# ── Step 3: Initialize Tauri Android project ──
+# ── Step 5: Initialize Tauri Android project ──
 
 if [ ! -d "$ANDROID_PROJECT" ]; then
     info "Initializing Tauri Android project..."
@@ -294,7 +338,7 @@ else
     info "Tauri Android project already exists"
 fi
 
-# ── Step 4: Configure Android permissions ──
+# ── Step 6: Configure Android permissions ──
 
 MANIFEST="$ANDROID_PROJECT/app/src/main/AndroidManifest.xml"
 if [ -f "$MANIFEST" ]; then
@@ -310,7 +354,7 @@ if [ -f "$MANIFEST" ]; then
     fi
 fi
 
-# ── Step 5: Build ──
+# ── Step 7: Build ──
 
 if $SETUP_ONLY; then
     info "Setup complete. Run without --setup-only to build."

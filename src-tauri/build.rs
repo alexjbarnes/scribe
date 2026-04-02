@@ -4,16 +4,6 @@ fn main() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
 
-    // Grammar neural (CoLA router + T5 corrector) is desktop-only.
-    //
-    // On Android, sherpa-onnx links ORT statically into libverba_rs_lib.so.
-    // Grammar neural would load a second ORT instance (libonnxruntime.so) via
-    // dlopen. Two ORT copies in the same process corrupt shared global state
-    // (thread pools, NUMA topology) and cause the recorder thread to crash.
-    //
-    // Grammar neural will be re-enabled on Android once models are delivered
-    // via R2/download instead of embedded at compile time, allowing the
-    // ort dependency to be replaced by a standalone inference path.
     let grammar_dir = std::path::Path::new(&manifest_dir).join("data/grammar");
     let grammar_files = [
         "cola_model_quantized.onnx",
@@ -22,8 +12,7 @@ fn main() {
         "decoder_model_quantized.onnx",
         "t5_tokenizer.json",
     ];
-    let grammar_bundled = target_os != "android"
-        && grammar_files.iter().all(|f| grammar_dir.join(f).exists());
+    let grammar_bundled = grammar_files.iter().all(|f| grammar_dir.join(f).exists());
     if grammar_bundled {
         println!("cargo:rustc-cfg=grammar_neural_bundled");
     }
@@ -41,13 +30,34 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,--no-as-needed,-lc++_shared,--as-needed");
         println!("cargo:rustc-link-lib=dylib=log");
 
-        // sherpa-onnx's session.cc references OrtSessionOptionsAppendExecutionProvider_Nnapi
-        // but the ONNX Runtime static lib doesn't include the NNAPI provider, leaving a
-        // GLOBAL UNDEFINED symbol that crashes the Android dynamic linker on arm64.
+        // sherpa-onnx's session.cc references OrtSessionOptionsAppendExecutionProvider_Nnapi.
+        // Keep this stub so the symbol is always defined regardless of ORT build flags.
         cc::Build::new().file("stubs.c").compile("stubs");
 
-        // libonnxruntime.so is NOT bundled in the Android APK.
-        // Grammar neural is desktop-only (see comment above), so ORT is never
-        // loaded at runtime on Android. Omitting it saves ~25MB in the APK.
+        // sherpa-onnx is compiled against the official ORT Android shared library
+        // (libonnxruntime.so) rather than a static ORT archive. This means:
+        //   1. libverba_rs_lib.so records libonnxruntime.so as DT_NEEDED.
+        //   2. Android loads libonnxruntime.so before any user code runs.
+        //   3. When the ort Rust crate calls dlopen("libonnxruntime.so"), the OS
+        //      returns the already-loaded handle — one ORT instance in the process,
+        //      no shared global state corruption, no recorder thread crash.
+        //
+        // sherpa-onnx-sys emits `static=onnxruntime`, which expects libonnxruntime.a
+        // in SHERPA_ONNX_LIB_DIR. android-build.sh --setup-only creates an empty
+        // stub archive there so that directive is satisfied without embedding ORT code.
+        println!("cargo:rustc-link-lib=dylib=onnxruntime");
+        println!("cargo:rerun-if-env-changed=SHERPA_ONNX_LIB_DIR");
+
+        // Copy libonnxruntime.so to jniLibs so the APK includes it and the Android
+        // Package Manager extracts it to the app's native library directory at install.
+        if let Ok(lib_dir) = std::env::var("SHERPA_ONNX_LIB_DIR") {
+            let ort_so = std::path::Path::new(&lib_dir).join("libonnxruntime.so");
+            let jni_libs = std::path::Path::new(&manifest_dir)
+                .join("gen/android/app/src/main/jniLibs/arm64-v8a");
+            if ort_so.exists() {
+                let _ = std::fs::create_dir_all(&jni_libs);
+                let _ = std::fs::copy(&ort_so, jni_libs.join("libonnxruntime.so"));
+            }
+        }
     }
 }
