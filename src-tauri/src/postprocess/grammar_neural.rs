@@ -124,8 +124,7 @@ mod bundled {
 
         /// Returns true if the sentence should be sent to the corrector.
         pub fn needs_correction(&self, text: &str) -> bool {
-            log::debug!("Grammar neural: running CoLA classifier");
-            let result = match self.p_acceptable(text) {
+            match self.p_acceptable(text) {
                 Ok(p) => {
                     log::debug!("CoLA p(acceptable)={p:.3} threshold={COLA_THRESHOLD}");
                     p < COLA_THRESHOLD
@@ -134,9 +133,7 @@ mod bundled {
                     log::warn!("CoLA router error: {e}");
                     false
                 }
-            };
-            log::debug!("Grammar neural: CoLA done, needs_correction={result}");
-            result
+            }
         }
 
         fn p_acceptable(&self, text: &str) -> Result<f32, String> {
@@ -169,7 +166,6 @@ mod bundled {
             let tids_ref = TensorRef::<i64>::from_array_view(&token_type_ids)
                 .map_err(|e| format!("tids tensor: {e}"))?;
 
-            log::debug!("Grammar neural: CoLA session.run ({n} tokens)");
             let mut session = self.cola_session.lock().unwrap();
             let out = session
                 .run(inputs![
@@ -178,7 +174,6 @@ mod bundled {
                     "token_type_ids" => tids_ref,
                 ])
                 .map_err(|e| format!("cola run: {e}"))?;
-            log::debug!("Grammar neural: CoLA session.run done");
 
             // logits shape [1, 2]: index 0 = not_acceptable, 1 = acceptable
             let logits = out
@@ -194,17 +189,14 @@ mod bundled {
 
         /// Run T5 correction. Returns the corrected text, or the original on error.
         pub fn correct(&self, text: &str) -> String {
-            log::debug!("Grammar neural: running T5 correction");
-            let result = match self.correct_inner(text) {
+            match self.correct_inner(text) {
                 Ok(s) if !s.trim().is_empty() => s,
                 Ok(_) => text.to_string(),
                 Err(e) => {
                     log::warn!("T5 correction failed: {e}");
                     text.to_string()
                 }
-            };
-            log::debug!("Grammar neural: T5 correction done");
-            result
+            }
         }
 
         fn correct_inner(&self, text: &str) -> Result<String, String> {
@@ -226,7 +218,6 @@ mod bundled {
             let mask_ref = TensorRef::<i64>::from_array_view(&attention_mask)
                 .map_err(|e| format!("mask tensor: {e}"))?;
 
-            log::debug!("Grammar neural: running T5 encoder ({n} tokens)");
             let mut encoder = self.t5_encoder.lock().unwrap();
             let enc_out = encoder
                 .run(inputs![
@@ -234,19 +225,10 @@ mod bundled {
                     "attention_mask" => mask_ref,
                 ])
                 .map_err(|e| format!("encoder run: {e}"))?;
-            log::debug!("Grammar neural: T5 encoder done");
-            log::debug!("T5 encoder outputs: {:?}", enc_out.keys().collect::<Vec<_>>());
 
-            // The output is typically 'last_hidden_state' but some exports use
-            // a different name. Fall back to the first (and only) output if needed.
-            let enc_hidden = enc_out
-                .get("last_hidden_state")
-                .or_else(|| {
-                    log::info!("T5 encoder: 'last_hidden_state' not found, using first output");
-                    Some(&enc_out[0])
-                })
-                .ok_or("T5 encoder produced no outputs")?;
-            let hidden: ArrayD<f32> = enc_hidden
+            let hidden: ArrayD<f32> = enc_out
+                .get("hidden_states")
+                .ok_or("encoder: no 'hidden_states' output")?
                 .try_extract_array::<f32>()
                 .map_err(|e| format!("encoder hidden: {e}"))?
                 .into_owned();
@@ -275,10 +257,8 @@ mod bundled {
             let mut tokens: Vec<i64> = vec![self.decoder_start_token_id];
             // Cap at 2× encoder input length to avoid runaway generation.
             let limit = MAX_NEW_TOKENS.min(hidden.shape()[1] * 2 + 16);
-            log::debug!("Grammar neural: T5 decoder greedy loop (limit={limit})");
 
-            for step in 0..limit {
-                log::debug!("Grammar neural: T5 decoder step {step}");
+            for _ in 0..limit {
                 let seq = tokens.len();
                 let dec_input = Array2::from_shape_vec((1, seq), tokens.clone())
                     .map_err(|e| e.to_string())?;
