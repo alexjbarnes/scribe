@@ -1,4 +1,4 @@
-//! Stage 4 (neural path): CoLA router + t5-efficient-tiny corrector.
+//! Stage 4 (neural path): grammar router + t5-efficient-tiny corrector.
 //!
 //! Model files are embedded at compile time from `data/grammar/`. If those
 //! files are absent when the crate is built the entire stage compiles out
@@ -8,8 +8,8 @@
 //! Corrector: visheratin/t5-efficient-tiny-grammar-correction (~50ms, 44MB INT8)
 //!
 //! To enable: place the following files in src-tauri/data/grammar/ then rebuild:
-//!   cola_model_quantized.onnx     — ELECTRA CoLA classifier
-//!   cola_tokenizer.json           — BERT tokenizer for CoLA
+//!   cola_model_quantized.onnx     — grammar router model (ELECTRA-based)
+//!   cola_tokenizer.json           — grammar router tokenizer
 //!   encoder_model_quantized.onnx  — T5 encoder
 //!   decoder_model_quantized.onnx  — T5 decoder (greedy, no KV cache)
 //!   t5_tokenizer.json             — SentencePiece tokenizer for T5
@@ -28,9 +28,9 @@ mod bundled {
     use ort::value::TensorRef;
     use tokenizers::Tokenizer;
 
-    static COLA_MODEL_BYTES: &[u8] =
+    static ROUTER_MODEL_BYTES: &[u8] =
         include_bytes!("../../data/grammar/cola_model_quantized.onnx");
-    static COLA_TOKENIZER_BYTES: &[u8] = include_bytes!("../../data/grammar/cola_tokenizer.json");
+    static ROUTER_TOKENIZER_BYTES: &[u8] = include_bytes!("../../data/grammar/cola_tokenizer.json");
     static ENC_MODEL_BYTES: &[u8] =
         include_bytes!("../../data/grammar/encoder_model_quantized.onnx");
     static DEC_MODEL_BYTES: &[u8] =
@@ -54,8 +54,8 @@ mod bundled {
     }
 
     pub struct GrammarNeuralChecker {
-        cola_session: Mutex<Session>,
-        cola_tokenizer: Tokenizer,
+        router_session: Mutex<Session>,
+        router_tokenizer: Tokenizer,
         t5_encoder: Mutex<Session>,
         t5_decoder: Mutex<Session>,
         t5_tokenizer: Tokenizer,
@@ -64,7 +64,7 @@ mod bundled {
     }
 
     /// P(acceptable) below this threshold → route to corrector.
-    const COLA_THRESHOLD: f32 = 0.75;
+    const ROUTER_THRESHOLD: f32 = 0.75;
 
     /// Cap on output tokens (greedy decode loop limit).
     const MAX_NEW_TOKENS: usize = 96;
@@ -89,13 +89,13 @@ mod bundled {
         fn load() -> Result<Self, String> {
             ensure_ort_init()?;
 
-            let cola_session = Session::builder()
+            let router_session = Session::builder()
                 .map_err(|e| format!("session builder: {e}"))?
-                .commit_from_memory(COLA_MODEL_BYTES)
-                .map_err(|e| format!("cola model: {e}"))?;
+                .commit_from_memory(ROUTER_MODEL_BYTES)
+                .map_err(|e| format!("router model: {e}"))?;
 
-            let cola_tokenizer = Tokenizer::from_bytes(COLA_TOKENIZER_BYTES)
-                .map_err(|e| format!("cola tokenizer: {e}"))?;
+            let router_tokenizer = Tokenizer::from_bytes(ROUTER_TOKENIZER_BYTES)
+                .map_err(|e| format!("router tokenizer: {e}"))?;
 
             let t5_encoder = Session::builder()
                 .map_err(|e| format!("session builder: {e}"))?
@@ -112,8 +112,8 @@ mod bundled {
 
             log::info!("Neural grammar checker loaded (bundled)");
             Ok(Self {
-                cola_session: Mutex::new(cola_session),
-                cola_tokenizer,
+                router_session: Mutex::new(router_session),
+                router_tokenizer,
                 t5_encoder: Mutex::new(t5_encoder),
                 t5_decoder: Mutex::new(t5_decoder),
                 t5_tokenizer,
@@ -126,11 +126,11 @@ mod bundled {
         pub fn route(&self, text: &str) -> (bool, Option<f32>) {
             match self.p_acceptable(text) {
                 Ok(p) => {
-                    log::debug!("CoLA p(acceptable)={p:.3} threshold={COLA_THRESHOLD}");
-                    (p < COLA_THRESHOLD, Some(p))
+                    log::debug!("Grammar router p(acceptable)={p:.3} threshold={ROUTER_THRESHOLD}");
+                    (p < ROUTER_THRESHOLD, Some(p))
                 }
                 Err(e) => {
-                    log::warn!("CoLA router error: {e}");
+                    log::warn!("Grammar router error: {e}");
                     (false, None)
                 }
             }
@@ -138,9 +138,9 @@ mod bundled {
 
         fn p_acceptable(&self, text: &str) -> Result<f32, String> {
             let enc = self
-                .cola_tokenizer
+                .router_tokenizer
                 .encode(text, true)
-                .map_err(|e| format!("cola encode: {e}"))?;
+                .map_err(|e| format!("router encode: {e}"))?;
 
             let n = enc.get_ids().len();
             let input_ids = Array2::from_shape_vec(
@@ -166,19 +166,19 @@ mod bundled {
             let tids_ref = TensorRef::<i64>::from_array_view(&token_type_ids)
                 .map_err(|e| format!("tids tensor: {e}"))?;
 
-            let mut session = self.cola_session.lock().unwrap();
+            let mut session = self.router_session.lock().unwrap();
             let out = session
                 .run(inputs![
                     "input_ids"      => ids_ref,
                     "attention_mask" => mask_ref,
                     "token_type_ids" => tids_ref,
                 ])
-                .map_err(|e| format!("cola run: {e}"))?;
+                .map_err(|e| format!("router run: {e}"))?;
 
             // logits shape [1, 2]: index 0 = not_acceptable, 1 = acceptable
             let logits = out
                 .get("logits")
-                .ok_or_else(|| format!("CoLA: no 'logits' output; got: {:?}", out.keys().collect::<Vec<_>>()))?
+                .ok_or_else(|| format!("grammar router: no 'logits' output; got: {:?}", out.keys().collect::<Vec<_>>()))?
                 .try_extract_array::<f32>()
                 .map_err(|e| format!("extract logits: {e}"))?;
             let l0 = logits[[0, 0]];

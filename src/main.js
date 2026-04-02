@@ -150,11 +150,11 @@ function renderPipelineStages(stages, chunkTimings) {
       const tag = unchanged ? ' (no change)' : '';
       const timing = stage.duration_ms ? ` ${stage.duration_ms}ms` : '';
       let colaHtml = '';
-      if (stage.cola_score != null) {
-        const pct = Math.round(stage.cola_score * 100);
-        const routed = stage.cola_score < 0.75;
+      if (stage.grammar_score != null) {
+        const pct = Math.round(stage.grammar_score * 100);
+        const routed = stage.grammar_score < 0.75;
         const color = routed ? '#f87171' : '#4ade80';
-        colaHtml = ` <span style="color:${color};font-variant-numeric:tabular-nums">CoLA ${pct}%${routed ? ' → corrected' : ''}</span>`;
+        colaHtml = ` <span style="color:${color};font-variant-numeric:tabular-nums">Score ${pct}%${routed ? ' → corrected' : ''}</span>`;
       }
       const textHtml = (!isBaseline && stage.changed)
         ? renderDiffHtml(stages[idx - 1].text, stage.text)

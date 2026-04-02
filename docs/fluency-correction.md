@@ -478,3 +478,50 @@ DistilGPT2 perplexity scoring is not recommended as a router. It cannot distingu
 3. **DeBERTa/electra model size.** electra-small FP32 is ~54MB. Dynamic INT8 quantization via ORT `quantize_dynamic` should give ~14MB. Acceptable as a model asset.
 
 4. **Homophone coverage ceiling.** The 5 FN cases are a structural ceiling — no CoLA classifier can route `your going to` since it parses syntactically. Addressing these requires a separate lexical layer (Harper homophone rules) that runs independently of the router.
+
+---
+
+## April 2026 follow-up: production observations and next steps
+
+### Router mismatch in production
+
+Once deployed (electra-small router + t5-efficient-tiny, threshold 0.75), real dictation revealed a consistent over-triggering pattern. Conversational sentences like `"Yeah that makes sense. That's fine."` scored below the threshold because "Yeah" at the start registers as informal. The corrector then hallucinated content — `"That's fine."` became `"That makes sense. That is fine."` — a phrase duplication that changed the meaning.
+
+This confirms the structural issue flagged in the v3 test results: the CoLA framing measures formal written acceptability, not transcription correctness. Informal conversational register reliably fails it regardless of whether the ASR output was correct.
+
+The grammar router score is now surfaced in the history detail view per-entry so the threshold can be tuned empirically on real dictation data.
+
+### Short-text gate
+
+Replacement dictation (user highlights 2-3 words and re-dictates) sends fragments through the pipeline. A 2-word fragment like "main branch" scores very low on CoLA (it is not a sentence) and gets rewritten by T5 into something different. A word-count gate (`MIN_GRAMMAR_WORDS = 5`) skips the grammar stage entirely for short inputs. At or below 5 words there is not enough context for either the router or corrector to make reliable decisions.
+
+### Is CoLA the right framing? No.
+
+The router should answer "does this text contain a transcription error?" not "is this grammatically acceptable formal English?". These are different questions. Conversational speech fails CoLA even when perfect. Subtle ASR word substitutions can pass it.
+
+The most promising alternative reuses the same ELECTRA-small architecture already embedded, but with a different task head. `google/electra-small-discriminator` was pretrained to predict which tokens were "replaced" by a generator (the ELECTRA training objective). This maps directly to detecting substituted ASR words. `Xenova/electra-small-discriminator` has a 14MB INT8 ONNX export on HuggingFace. The routing signal would be max per-token replaced-probability rather than a CLS-level sentence score — informal register would not affect it, but phonetically-substituted words would score high.
+
+### Alternative correctors evaluated (April 2026)
+
+The following correctors now have known ONNX-ready exports. Key finding: models trained on synthetic typo data (visheratin family, C4_200M) are more prone to hallucination than models trained on annotated GEC corpora or real learner errors.
+
+| Model | ONNX ready | INT8 total | Training data | Notes |
+|---|---|---|---|---|
+| visheratin/t5-efficient-tiny (current) | Yes | ~32 MB | C4_200M synthetic | Hallucination risk on informal text |
+| visheratin/t5-efficient-mini | Yes | ~56 MB | C4_200M synthetic | 6/8 over-corrections — worse than tiny |
+| onnx-community/grammar-synthesis-small-ONNX | Yes | ~91 MB | JFLEG real errors | Stated goal: preserve correct text. But earlier v2 tests show JFLEG models make semantic changes — see eliminated candidates above |
+| JonaWhisper/jonawhisper-gec-t5-small-onnx | Yes | ~94 MB | cLang-8 via Unbabel | Unbabel/gec-t5_small export — confirmed working, best quality at 3/8 over-corrections |
+| gotutiyan/gec-t5-small-clang8 (self-convert) | No | ~77 MB est. | cLang-8 | No ONNX export, requires manual conversion |
+| GECToR roberta-base (self-convert) | No | ~130 MB | BEA19+W&I | Fixed edit vocabulary — cannot hallucinate new text. Best architecture for safety |
+
+**Note on grammar-synthesis-small (JFLEG):** Earlier corrector testing showed JFLEG-trained models rewrite fluency rather than make minimal corrections — `"The quick brown fox"` became `"The yellow fox"`, `"API endpoints"` became `"API ends"`. The `onnx-community` export may behave differently if based on a different checkpoint, but treat as unverified until tested against the v2/v3 test sets.
+
+### GECToR: architecture-level fix for hallucination
+
+GECToR (Grammatical Error Correction as Sequence Tagging) outputs per-token edit operations from a fixed vocabulary of ~5000 transformations (KEEP, DELETE, verb inflections, article changes, preposition swaps). It cannot produce arbitrary text — every output token is one of the predefined edit operations. This eliminates hallucination at the architecture level.
+
+Available models all lack ONNX exports and require manual safetensors → ONNX conversion. INT8 sizes: roberta-base ~130MB, deberta-base ~125MB. No small-backbone variant exists. Worth the conversion effort if hallucination remains a problem after router improvements.
+
+### Recommended next step
+
+Switch the router from CoLA sentence scoring to ELECTRA discriminator per-token scoring. Same 14MB model family, no file size increase, eliminates the informal-register false-trigger problem. Implement `route_per_token()` that runs `google/electra-small-discriminator` (not the CoLA fine-tune) and returns the max per-token replaced-probability as the routing score. File naming in `data/grammar/` stays unchanged since the file format is the same.
