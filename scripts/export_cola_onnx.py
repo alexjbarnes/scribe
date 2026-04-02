@@ -59,8 +59,11 @@ def main():
         tok_src.unlink()
     print(f"Tokenizer: {tok_dst}")
 
-    # Clean up temp dir.
+    # Clean up temp dir and any stale external data files optimum may have
+    # left in the output directory (e.g. cola_model.onnx.data).
     shutil.rmtree(tmp_dir)
+    for stale in out.glob("*.onnx.data"):
+        stale.unlink()
 
     print(f"\nFiles written to {out}:")
     for f in sorted(out.iterdir()):

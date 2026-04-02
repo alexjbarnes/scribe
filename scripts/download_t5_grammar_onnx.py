@@ -47,14 +47,13 @@ def main():
         print("ERROR: no encoder ONNX found")
         return
 
-    # Download decoder (no 'with_past'/'init', quantized preferred).
-    dec = next(
-        (f for f in onnx_files if "decoder" in f and "with_past" not in f and "init" not in f and is_quant(f)),
-        None,
-    ) or next(
-        (f for f in onnx_files if "decoder" in f and "with_past" not in f and "init" not in f),
-        None,
-    )
+    # Download decoder. Prefer init_decoder_quant (20MB, same input interface as
+    # decoder_model but also emits KV cache which we discard) over the plain
+    # unquantized decoder_model (77MB). Fall back through quantized plain decoder,
+    # then unquantized plain decoder.
+    dec = next((f for f in onnx_files if "init_decoder" in f and is_quant(f)), None) \
+       or next((f for f in onnx_files if "decoder" in f and "with_past" not in f and "init" not in f and is_quant(f)), None) \
+       or next((f for f in onnx_files if "decoder" in f and "with_past" not in f and "init" not in f), None)
     if dec:
         local = hf_hub_download(model_id, dec)
         shutil.copy(local, out / "decoder_model_quantized.onnx")
