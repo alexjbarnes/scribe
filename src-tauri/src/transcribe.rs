@@ -224,18 +224,29 @@ fn worker(
     while let Ok(req) = req_rx.recv() {
         let total_start = Instant::now();
 
-        let rec = &recognizer;
-
         let decode_start = Instant::now();
-        let stream = rec.create_stream();
-        stream.accept_waveform(req.sample_rate, &req.samples);
-        rec.decode(&stream);
+        // Wrap inference in catch_unwind so an ORT C++ exception crossing the
+        // FFI boundary doesn't kill the whole process. If inference panics we
+        // break out of the loop; the thread exits cleanly and subsequent
+        // transcribe() calls will return "transcriber thread dead".
+        let infer_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let stream = recognizer.create_stream();
+            stream.accept_waveform(req.sample_rate, &req.samples);
+            recognizer.decode(&stream);
+            stream.get_result()
+                .map(|r| r.text.trim().to_string())
+                .unwrap_or_default()
+        }));
         let decode_ms = decode_start.elapsed().as_millis();
 
-        let text = stream
-            .get_result()
-            .map(|r| r.text.trim().to_string())
-            .unwrap_or_default();
+        let text = match infer_result {
+            Ok(t) => t,
+            Err(_) => {
+                log::error!("ORT crashed during inference — transcriber exiting");
+                let _ = req.result_tx.send(Err("ONNX Runtime crashed during inference".to_string()));
+                break;
+            }
+        };
 
         let total_ms = total_start.elapsed().as_millis();
         let audio_duration = req.samples.len() as f32 / req.sample_rate as f32;

@@ -130,6 +130,18 @@ impl ModelManager {
         self.active_model.lock().unwrap().clone()
     }
 
+    /// Clear the active model selection and persist the change.
+    /// Called when a model fails to load so the next startup falls back to
+    /// the preferred list rather than looping on the same broken model.
+    pub fn clear_active(&self) {
+        *self.active_model.lock().unwrap() = String::new();
+        let mut cfg = crate::config::AppConfig::load();
+        cfg.active_model_id = String::new();
+        if let Err(e) = cfg.save() {
+            log::warn!("Failed to clear active model in config: {e}");
+        }
+    }
+
     pub fn list(&self) -> Vec<ModelInfo> {
         let progress = self.progress.lock().unwrap();
         let active = self.active_model.lock().unwrap();

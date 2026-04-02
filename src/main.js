@@ -501,9 +501,6 @@ async function loadAudioDevices() {
 
 async function loadConfig() {
   const cfg = await invoke('get_config');
-  document.getElementById('cfg-language').value = cfg.language;
-  document.getElementById('cfg-threads').value = cfg.threads;
-  document.getElementById('cfg-output-dir').value = cfg.output_dir;
   document.getElementById('cfg-haptic').checked = cfg.haptic_feedback;
   // Restore audio device selection
   document.getElementById('audio-device').value = cfg.device_index;
@@ -511,9 +508,6 @@ async function loadConfig() {
 
 async function saveConfig() {
   const cfg = {
-    language: document.getElementById('cfg-language').value,
-    threads: parseInt(document.getElementById('cfg-threads').value, 10),
-    output_dir: document.getElementById('cfg-output-dir').value,
     device_index: parseInt(document.getElementById('audio-device').value, 10),
     active_engine: 'whisper',
     active_model_id: '',

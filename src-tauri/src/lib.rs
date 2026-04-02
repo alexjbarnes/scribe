@@ -127,7 +127,12 @@ fn android_show_toast(msg: &str) {
 
 #[tauri::command]
 async fn switch_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
-    models::ModelManager::global().set_active(&id)?;
+    // Validate the model is downloaded before accepting the switch.
+    // set_active is deferred until after the model successfully loads so a
+    // failed load never corrupts the persisted active model.
+    if models::ModelManager::global().model_engine(&id).is_none() {
+        return Err("model not downloaded".into());
+    }
     log::info!("Switching to model: {id}");
     #[cfg(not(target_os = "android"))]
     let _ = app.emit("model-loading", serde_json::json!({ "id": &id }));
@@ -146,6 +151,8 @@ async fn switch_model(app: tauri::AppHandle, id: String) -> Result<(), String> {
                 let model_engine = mgr.model_engine(&id2)
                     .ok_or_else(|| format!("model {id2} not downloaded"))?;
                 let t = transcribe::Transcriber::new(model_engine)?;
+                // Only persist active model after a successful load.
+                mgr.set_active(&id2)?;
                 eng.reload_model(t, id2.clone());
                 Ok(())
             });
@@ -212,7 +219,7 @@ fn remove_vocab_entry(from: String) -> Result<(), String> {
 }
 
 /// Initialize the Engine in the background: VAD, recorder, transcriber,
-/// speaker verifier, then preload model + post-processing pipeline.
+/// then preload model + post-processing pipeline.
 /// Shared by both Tauri app and Android IME -- whichever starts first
 /// creates the engine; the other is a no-op.
 fn init_engine(app: tauri::AppHandle) {
@@ -252,22 +259,32 @@ fn init_engine(app: tauri::AppHandle) {
                 }
             };
 
-            let (model_id, model_engine) = match mgr.first_downloaded_model() {
-                Some(pair) => pair,
-                None => {
-                    log::warn!("Engine init: no model downloaded yet");
-                    return;
-                }
-            };
+            // Try loading the active/preferred model, falling back through the
+            // preferred list if one fails. Clears a broken active model so the
+            // next startup doesn't loop on it.
+            let transcriber_and_id = loop {
+                let (model_id, model_engine) = match mgr.first_downloaded_model() {
+                    Some(pair) => pair,
+                    None => {
+                        log::warn!("Engine init: no model downloaded yet");
+                        let _ = app.emit("dictation-error", "No transcription model downloaded");
+                        return;
+                    }
+                };
 
-            log::info!("Engine init: loading model {model_id}");
-            let transcriber = match transcribe::Transcriber::new(model_engine) {
-                Ok(t) => t,
-                Err(e) => {
-                    log::error!("Engine init: failed to create transcriber: {e}");
-                    return;
+                log::info!("Engine init: loading model {model_id}");
+                match transcribe::Transcriber::new(model_engine) {
+                    Ok(t) => break (t, model_id),
+                    Err(e) => {
+                        log::error!("Engine init: failed to load {model_id}: {e}");
+                        mgr.clear_active();
+                        // first_downloaded_model will now skip this model and
+                        // return the next in the preferred list, or None if
+                        // there are no more candidates.
+                    }
                 }
             };
+            let (transcriber, model_id) = transcriber_and_id;
 
             let eng = engine::Engine::new(recorder, transcriber, model_id.clone());
             eng.preload();

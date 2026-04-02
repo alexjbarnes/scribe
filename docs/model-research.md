@@ -299,3 +299,62 @@ Two platform-provided options:
 **Potential use case for SpeechRecognizer:** zero-download fallback on first launch before the user has downloaded any model. Already on every Android 12+ device, routes through existing delivery pipeline via a Kotlin/JNI wrapper. Accuracy and privacy caveats would need to be surfaced in the UI.
 
 **Watch:** ML Kit GenAI expands to mainstream Android (Pixel 9+, Samsung flagships). When that happens the zero-download story becomes compelling — no model management, Google maintains quality.
+
+---
+
+## Parakeet V2 vs V3 — English accuracy comparison
+
+Researched April 2026. Sources: NVIDIA model cards, HuggingFace Open ASR Leaderboard, arXiv:2509.14128.
+
+### WER on HuggingFace Open ASR Leaderboard (8 English benchmarks)
+
+| Benchmark | V2 | V3 | Delta |
+|-----------|----|----|-------|
+| LibriSpeech test-clean | 1.69% | 1.93% | +0.24pp |
+| LibriSpeech test-other | 3.19% | 3.59% | +0.40pp |
+| AMI | 11.16% | 11.31% | +0.15pp |
+| Earnings-22 | 11.15% | 11.42% | +0.27pp |
+| GigaSpeech | 9.74% | 9.59% | -0.15pp |
+| SPGI Speech | 2.17% | 3.97% | +1.80pp |
+| TEDLIUM-v3 | 3.38% | 2.75% | -0.63pp |
+| VoxPopuli | 5.95% | 6.14% | +0.19pp |
+| **Average** | **6.05%** | **6.34%** | **+0.29pp** |
+
+V2 wins on 6 of 8 benchmarks. The SPGI Speech regression in V3 is the most notable — 83% relative degradation. SPGI Speech is business/financial speech, which is close to the technical dictation use case this app targets.
+
+V3 wins on TEDLIUM (lecture/talk speech) and GigaSpeech (podcasts/YouTube), suggesting its broader training data helps with informal spontaneous speech but hurts on read and professional speech.
+
+### Why V3 regresses on English
+
+V2 was pretrained on LibriLight using a wav2vec-style SSL objective — heavily English-focused. V3 was initialized from a multilingual CTC checkpoint (Granary dataset, 25 languages), which dilutes English specificity. NVIDIA traded English accuracy for multilingual coverage.
+
+### Verdict for English-only use
+
+V2 is the better default. V3 only adds value if multilingual support is needed. The registry description calling V3 "latest" is misleading — it is newer but not better for English.
+
+**INT8 sizes are comparable:** V2-int8 ~630 MB, V3-int8 ~670 MB. No storage reason to prefer V3.
+
+---
+
+## Best English ASR models for on-device inference (April 2026)
+
+### Leaderboard context
+
+| Model | Params | LS clean | LS other | Avg WER | On-device? |
+|-------|--------|----------|----------|---------|------------|
+| Canary-Qwen-2.5B | 2.5B | 1.60% | 3.10% | 5.63% | No (GPU only) |
+| IBM Granite-Speech-3.3-8B | 8B | — | — | 5.74% | No (GPU only) |
+| **Parakeet TDT 0.6B V2** | **0.6B** | **1.69%** | **3.19%** | **6.05%** | **Yes** |
+| Parakeet TDT 0.6B V3 | 0.6B | 1.93% | 3.59% | 6.34% | Yes |
+| Moonshine Streaming Medium | 245M | 2.08% | 5.00% | ~6.65% | Yes |
+| Distil-Whisper large-v3.5 | 756M | — | — | 7.21% | Yes |
+| Whisper large-v3 | 1.55B | ~2.7% | ~5.2% | 7.44% | Yes (slow on CPU) |
+| Whisper large-v3-turbo | 809M | ~2.0% | ~4.0% | ~8.0–8.5% | Yes |
+
+### Conclusion
+
+**Parakeet TDT 0.6B V2 is the best on-device English ASR model available.** No sub-1B model beats it. The only models with lower WER (Canary-Qwen-2.5B, Granite-Speech-3.3-8B) require NVIDIA GPU and are not viable on Android or CPU-only desktop.
+
+Moonshine Streaming Medium (245M) comes close at ~6.65% average and is purpose-built for edge devices, but no sherpa-onnx ONNX conversions exist yet for the streaming variants. Worth revisiting when they appear.
+
+**Against Whisper large-v3-turbo specifically:** Parakeet V2 is ~2pp more accurate on average, 25% smaller, and substantially faster (non-autoregressive transducer vs autoregressive decoder). The only reasons to prefer turbo are multilingual support (99 languages) and broader ecosystem compatibility.
