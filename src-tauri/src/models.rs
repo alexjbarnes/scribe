@@ -285,30 +285,6 @@ impl ModelManager {
         Ok(path)
     }
 
-    /// Path where the speaker embedding model should live.
-    pub fn speaker_model_path(&self) -> PathBuf {
-        self.base_dir.join("speaker_embed.onnx")
-    }
-
-    /// Ensure the speaker embedding model exists on disk, writing it from
-    /// the embedded binary if needed. Returns the path to the ONNX file.
-    pub fn ensure_speaker_model(&self) -> Result<PathBuf, String> {
-        let path = self.speaker_model_path();
-        if path.exists() {
-            return Ok(path);
-        }
-
-        log::info!("Writing embedded speaker embedding model to {}", path.display());
-        let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, SPEAKER_EMBED_BYTES)
-            .map_err(|e| format!("Speaker model write: {e}"))?;
-        std::fs::rename(&tmp, &path)
-            .map_err(|e| format!("Speaker model rename: {e}"))?;
-
-        log::info!("Speaker embedding model written ({} KB)", SPEAKER_EMBED_BYTES.len() / 1024);
-        Ok(path)
-    }
-
     pub fn delete(&self, id: &str) -> Result<(), String> {
         let model = self.find(id).ok_or("unknown model")?;
 
@@ -467,7 +443,6 @@ impl ModelManager {
 // ── Registry ──
 
 const SILERO_VAD_BYTES: &[u8] = include_bytes!("../silero_vad.onnx");
-const SPEAKER_EMBED_BYTES: &[u8] = include_bytes!("../speaker_embed.onnx");
 
 const HF_WHISPER_BASE_EN: &str =
     "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base.en/resolve/main";

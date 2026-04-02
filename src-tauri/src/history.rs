@@ -28,10 +28,6 @@ pub struct HistoryEntry {
     pub pipeline_stages: Vec<PipelineStage>,
     #[serde(default)]
     pub chunk_timings: Vec<ChunkTiming>,
-    #[serde(default)]
-    pub filtered_segments: u32,
-    #[serde(default)]
-    pub filtered_audio_ms: u64,
 }
 
 pub struct History {
@@ -63,8 +59,6 @@ impl History {
         postprocess_ms: u64,
         pipeline_stages: Vec<PipelineStage>,
         chunk_timings: Vec<ChunkTiming>,
-        filtered_segments: u32,
-        filtered_audio_ms: u64,
     ) {
         let entry = HistoryEntry {
             timestamp: chrono::Utc::now().to_rfc3339(),
@@ -75,8 +69,6 @@ impl History {
             postprocess_ms,
             pipeline_stages,
             chunk_timings,
-            filtered_segments,
-            filtered_audio_ms,
         };
         let mut entries = self.entries.lock().unwrap();
         entries.push(entry);

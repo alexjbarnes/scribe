@@ -94,21 +94,7 @@ pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeI
         }
     };
 
-    let verifier = match mgr.ensure_speaker_model() {
-        Ok(p) => match crate::speaker::SpeakerVerifier::new(&p) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                log::warn!("Overlay: speaker verifier failed: {e}");
-                None
-            }
-        },
-        Err(e) => {
-            log::warn!("Overlay: speaker model setup failed: {e}");
-            None
-        }
-    };
-
-    let eng = engine::Engine::new(recorder, transcriber, model_id, verifier);
+    let eng = engine::Engine::new(recorder, transcriber, model_id);
     engine::init_global(eng);
 
     log::info!("Overlay: initialization complete");

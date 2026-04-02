@@ -11,7 +11,6 @@ mod postprocess;
 #[cfg(desktop)]
 mod sound;
 mod recorder;
-pub mod speaker;
 mod transcribe;
 pub mod vad;
 #[cfg(target_os = "android")]
@@ -59,70 +58,6 @@ fn export_history() -> Result<String, String> {
     history::History::global().export()
 }
 
-/// Start a short enrollment recording. Creates a temporary recorder and
-/// speaker verifier, records 5 seconds, extracts and persists the embedding.
-#[tauri::command]
-fn enroll_speaker() -> Result<(), String> {
-    let mgr = models::ModelManager::global();
-    let speaker_model = mgr.ensure_speaker_model()?;
-    let verifier = speaker::SpeakerVerifier::new(&speaker_model)?;
-
-    let vad = mgr.ensure_vad_model().ok();
-    let rec = recorder::AudioRecorder::new(vad.as_deref())?;
-
-    let seg_rx = rec.start_streaming()?;
-
-    // Record 5 seconds of audio for a stable embedding.
-    std::thread::sleep(std::time::Duration::from_secs(5));
-
-    let tail = rec.stop()?;
-
-    // Collect all audio (VAD segments + tail)
-    let mut all_samples = Vec::new();
-    while let Ok(segment) = seg_rx.try_recv() {
-        all_samples.extend_from_slice(&segment);
-    }
-    all_samples.extend_from_slice(&tail);
-
-    // Need at least ~2 seconds of speech for a usable embedding
-    if all_samples.len() < 32_000 {
-        return Err("Not enough speech detected. Please speak clearly for the full duration.".into());
-    }
-
-    verifier.enroll(&all_samples)?;
-
-    if let Some(embedding) = verifier.enrolled_embedding() {
-        speaker::save_enrollment(&embedding)?;
-    }
-
-    // Update the engine's in-memory verifier
-    engine::with(|eng| {
-        if let Some(v) = eng.verifier() {
-            if let Some(emb) = speaker::load_enrollment() {
-                v.enroll_from_embedding(emb);
-            }
-        }
-    });
-
-    log::info!("Speaker enrolled and saved");
-    Ok(())
-}
-
-#[tauri::command]
-fn clear_speaker_enrollment() -> Result<(), String> {
-    engine::with(|eng| {
-        if let Some(verifier) = eng.verifier() {
-            verifier.clear_enrollment();
-        }
-    });
-    speaker::delete_enrollment()?;
-    Ok(())
-}
-
-#[tauri::command]
-fn get_speaker_enrollment_status() -> bool {
-    speaker::load_enrollment().is_some()
-}
 
 #[cfg(target_os = "android")]
 static GLOBAL_JVM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
@@ -334,30 +269,7 @@ fn init_engine(app: tauri::AppHandle) {
                 }
             };
 
-            let verifier = match mgr.ensure_speaker_model() {
-                Ok(p) => {
-                    log::info!("Engine init: speaker model at {}", p.display());
-                    match speaker::SpeakerVerifier::new(&p) {
-                        Ok(v) => {
-                            if let Some(embedding) = speaker::load_enrollment() {
-                                v.enroll_from_embedding(embedding);
-                                log::info!("Engine init: restored speaker enrollment");
-                            }
-                            Some(v)
-                        }
-                        Err(e) => {
-                            log::warn!("Engine init: speaker verifier failed: {e}");
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::warn!("Engine init: speaker model setup failed: {e}");
-                    None
-                }
-            };
-
-            let eng = engine::Engine::new(recorder, transcriber, model_id.clone(), verifier);
+            let eng = engine::Engine::new(recorder, transcriber, model_id.clone());
             eng.preload();
             engine::init_global(eng);
 
@@ -551,9 +463,6 @@ pub fn run() {
             list_history,
             clear_history,
             export_history,
-            enroll_speaker,
-            clear_speaker_enrollment,
-            get_speaker_enrollment_status,
             get_vocab_entries,
             add_vocab_entry,
             remove_vocab_entry,

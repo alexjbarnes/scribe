@@ -133,7 +133,6 @@ function formatEntryForCopy(entry) {
   if (entry.postprocess_ms) stats.push(entry.postprocess_ms + 'ms postprocess');
   const speed = formatSpeed(entry);
   if (speed) stats.push(speed);
-  if (entry.filtered_segments) stats.push(entry.filtered_segments + ' filtered (' + (entry.filtered_audio_ms / 1000).toFixed(1) + 's)');
   if (entry.model_id) stats.push(entry.model_id);
   lines.push(stats.join(' | '));
 
@@ -186,7 +185,6 @@ function renderHistory(entries) {
       formatDuration(entry.duration_ms) + ' to transcribe',
       entry.postprocess_ms ? entry.postprocess_ms + 'ms postprocess' : null,
       formatSpeed(entry),
-      entry.filtered_segments ? entry.filtered_segments + ' filtered (' + (entry.filtered_audio_ms / 1000).toFixed(1) + 's)' : null,
       escapeHtml(entry.model_id),
     ].filter(Boolean);
 
@@ -505,64 +503,6 @@ async function saveConfig() {
   }
 }
 
-// ── Voice Enrollment ──
-
-const enrollBtn = document.getElementById('enroll-btn');
-const clearEnrollBtn = document.getElementById('clear-enroll-btn');
-const enrollmentLabel = document.getElementById('enrollment-label');
-const enrollmentRecording = document.getElementById('enrollment-recording');
-
-async function loadEnrollmentStatus() {
-  try {
-    const enrolled = await invoke('get_speaker_enrollment_status');
-    if (enrolled) {
-      enrollmentLabel.textContent = 'Enrolled. Only your voice will be transcribed.';
-      clearEnrollBtn.classList.remove('hidden');
-    } else {
-      enrollmentLabel.textContent = 'Not enrolled. All voices will be transcribed.';
-      clearEnrollBtn.classList.add('hidden');
-    }
-  } catch (_) {
-    // Command may not exist on mobile
-  }
-}
-
-enrollBtn.addEventListener('click', async () => {
-  enrollBtn.disabled = true;
-  enrollBtn.textContent = 'Recording...';
-  enrollBtn.classList.add('opacity-50');
-  enrollmentRecording.classList.remove('hidden');
-  enrollmentRecording.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-  // Let the browser paint the recording UI before the invoke blocks
-  await new Promise(r => setTimeout(r, 100));
-
-  try {
-    await invoke('enroll_speaker');
-    enrollmentLabel.textContent = 'Enrolled. Only your voice will be transcribed.';
-    clearEnrollBtn.classList.remove('hidden');
-    showToast('Voice enrolled successfully');
-  } catch (err) {
-    showToast('Enrollment failed: ' + err);
-  }
-
-  enrollmentRecording.classList.add('hidden');
-  enrollBtn.disabled = false;
-  enrollBtn.textContent = 'Enroll Voice';
-  enrollBtn.classList.remove('opacity-50');
-});
-
-clearEnrollBtn.addEventListener('click', async () => {
-  try {
-    await invoke('clear_speaker_enrollment');
-    enrollmentLabel.textContent = 'Not enrolled. All voices will be transcribed.';
-    clearEnrollBtn.classList.add('hidden');
-    showToast('Voice enrollment cleared');
-  } catch (err) {
-    showToast('Failed to clear enrollment: ' + err);
-  }
-});
-
 // ── Vocabulary tab ──
 
 async function loadVocab() {
@@ -662,7 +602,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadModels();
   await loadAudioDevices();
   await loadConfig();
-  await loadEnrollmentStatus();
   await loadVocab();
 
   document.getElementById('save-config').addEventListener('click', saveConfig);
