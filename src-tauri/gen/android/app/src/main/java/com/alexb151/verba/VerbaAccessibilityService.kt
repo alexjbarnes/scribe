@@ -73,6 +73,7 @@ class VerbaAccessibilityService : AccessibilityService() {
     private var isDragging = false
     @Volatile private var snippetMode = false
     private var longPressRunnable: Runnable? = null
+    private var longPressFired = false
     private val longPressDelayMs = 500L
 
     private var ringView: RoundedRingView? = null
@@ -348,12 +349,14 @@ class VerbaAccessibilityService : AccessibilityService() {
                 lastTouchX = event.rawX
                 lastTouchY = event.rawY
                 isDragging = false
+                longPressFired = false
                 micButton?.scaleX = 0.85f
                 micButton?.scaleY = 0.85f
 
                 // Schedule long-press → snippet mode
                 longPressRunnable = Runnable {
                     if (!isDragging && !recording && !processing) {
+                        longPressFired = true
                         startSnippetRecording()
                     }
                 }
@@ -384,9 +387,10 @@ class VerbaAccessibilityService : AccessibilityService() {
                 micButton?.scaleX = 1.0f
                 micButton?.scaleY = 1.0f
 
-                if (snippetMode && recording) {
-                    // Long-press started snippet recording — let it continue.
-                    // User taps again (onMicClick) to stop.
+                if (longPressFired) {
+                    // This is the release after the long-press that just started
+                    // snippet recording — let it continue. Next tap stops it.
+                    longPressFired = false
                 } else if (!isDragging) {
                     onMicClick()
                 } else {
