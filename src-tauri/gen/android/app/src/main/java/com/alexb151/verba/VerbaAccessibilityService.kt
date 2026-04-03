@@ -385,8 +385,8 @@ class VerbaAccessibilityService : AccessibilityService() {
                 micButton?.scaleY = 1.0f
 
                 if (snippetMode && recording) {
-                    // Finger lifted after long-press snippet recording
-                    stopAndMatchSnippet()
+                    // Long-press started snippet recording — let it continue.
+                    // User taps again (onMicClick) to stop.
                 } else if (!isDragging) {
                     onMicClick()
                 } else {
@@ -464,7 +464,7 @@ class VerbaAccessibilityService : AccessibilityService() {
     }
 
     private fun onMicClick() {
-        logI("onMicClick: initialized=$initialized recording=$recording processing=$processing")
+        logI("onMicClick: initialized=$initialized recording=$recording processing=$processing snippetMode=$snippetMode")
         if (!initialized) {
             toast("Model still loading...")
             return
@@ -475,7 +475,7 @@ class VerbaAccessibilityService : AccessibilityService() {
         }
 
         if (recording) {
-            stopAndTranscribe()
+            if (snippetMode) stopAndMatchSnippet() else stopAndTranscribe()
         } else {
             startRecording()
         }
