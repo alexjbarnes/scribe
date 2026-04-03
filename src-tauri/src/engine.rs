@@ -187,6 +187,37 @@ impl PendingTranscription {
             transcribe_ms: total_transcribe_ms,
         })
     }
+
+    /// Same as [`finalize`] but skips history persistence.
+    /// Used for UI-driven recording (snippet wizard) where we just
+    /// need the text back without creating a history entry.
+    pub fn finalize_without_history(mut self) -> Option<String> {
+        let mut all_chunks: Vec<ChunkResult> = Vec::new();
+        if let Some(handle) = self.consumer_handle {
+            if let Ok(result) = handle.join() {
+                all_chunks = result.chunks;
+            }
+        }
+
+        let tail_audio_ms = (self.samples.len() as f64 / 16.0) as u64;
+        if !self.samples.is_empty() && tail_audio_ms > 100 {
+            const TAIL_PAD_SAMPLES: usize = 16_000 / 5;
+            self.samples.extend(std::iter::repeat(0.0f32).take(TAIL_PAD_SAMPLES));
+            match self.transcriber.transcribe(self.samples, 16_000) {
+                Ok(text) if !text.is_empty() => {
+                    all_chunks.push(ChunkResult { text, audio_ms: tail_audio_ms, transcribe_ms: 0 });
+                }
+                _ => {}
+            }
+        }
+
+        if all_chunks.is_empty() { return None; }
+
+        let all_texts: Vec<&str> = all_chunks.iter().map(|c| c.text.as_str()).collect();
+        let raw_text = postprocess::join_chunks(&all_texts);
+        let result = postprocess::postprocess(&raw_text);
+        Some(result.text)
+    }
 }
 
 pub struct Engine {

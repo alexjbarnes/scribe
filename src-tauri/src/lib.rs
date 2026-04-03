@@ -248,6 +248,30 @@ fn add_snippet_trigger(id: String, trigger: String) -> Result<(), String> {
     snippets::SnippetManager::global().add_trigger(&id, trigger)
 }
 
+/// Start recording from the UI (no hotkey, no delivery).
+/// The frontend calls this, then later calls `ui_stop_and_transcribe`
+/// to get the text back.
+#[tauri::command]
+fn ui_start_recording() -> Result<(), String> {
+    engine::with(|eng| eng.start_streaming())
+        .unwrap_or_else(|| Err("Engine not ready".into()))
+}
+
+/// Stop a UI-initiated recording and return the transcribed text.
+/// Runs post-processing but does NOT save to history or deliver text.
+#[tauri::command]
+async fn ui_stop_and_transcribe() -> Result<String, String> {
+    let pending = engine::with(|eng| eng.stop_recording())
+        .unwrap_or_else(|| Err("Engine not ready".into()))?;
+
+    tokio::task::spawn_blocking(move || {
+        pending.finalize_without_history()
+            .ok_or_else(|| "No speech detected".into())
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
 /// Initialize the Engine in the background: VAD, recorder, transcriber,
 /// then preload model + post-processing pipeline.
 /// Shared by both Tauri app and Android IME -- whichever starts first
@@ -621,6 +645,8 @@ pub fn run() {
             save_snippet,
             delete_snippet,
             add_snippet_trigger,
+            ui_start_recording,
+            ui_stop_and_transcribe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

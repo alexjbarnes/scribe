@@ -226,20 +226,43 @@
       </div>
     </div>
 
-    <!-- Add snippet form -->
-    <div class="bg-surface-container-low rounded-xl p-5 space-y-4">
-      <p class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Add snippet</p>
-      <div class="space-y-3">
-        <div>
-          <label class="text-xs text-on-surface-variant mb-1 block">Trigger phrase</label>
-          <input id="snippet-trigger" type="text" placeholder="e.g. insert address" class="w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors" />
+    <!-- Create snippet button (default view) -->
+    <div id="snippet-create-btn-wrap">
+      <button id="snippet-create-btn" class="w-full bg-primary text-on-primary text-xs font-bold py-3 rounded-xl hover:brightness-110 transition-all active:scale-[0.98] cursor-pointer">Create Snippet</button>
+    </div>
+
+    <!-- Snippet creation wizard (hidden until Create is tapped) -->
+    <div id="snippet-wizard" class="hidden space-y-4">
+      <div class="bg-surface-container-low rounded-xl p-5 space-y-5">
+        <!-- Step indicator -->
+        <div class="flex items-center gap-2">
+          <div class="flex gap-1.5">
+            <div id="wiz-dot-1" class="w-2 h-2 rounded-full bg-primary"></div>
+            <div id="wiz-dot-2" class="w-2 h-2 rounded-full bg-outline-variant/40"></div>
+            <div id="wiz-dot-3" class="w-2 h-2 rounded-full bg-outline-variant/40"></div>
+          </div>
+          <span id="wiz-step-label" class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Step 1 of 3</span>
         </div>
-        <div>
-          <label class="text-xs text-on-surface-variant mb-1 block">Body text</label>
-          <textarea id="snippet-body" rows="3" placeholder="e.g. 123 Main St, London, EC1A 1BB" class="w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors resize-none"></textarea>
+
+        <!-- Prompt -->
+        <p id="wiz-prompt" class="text-sm text-on-surface font-medium">Say your trigger phrase</p>
+        <p id="wiz-hint" class="text-xs text-on-surface-variant -mt-3">This is how you will activate this snippet by voice</p>
+
+        <!-- Record button -->
+        <button id="wiz-record-btn" class="w-full py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-[0.98] cursor-pointer bg-surface-container-highest text-on-surface border border-outline-variant/30 hover:bg-surface-container-high">
+          <span class="material-symbols-outlined text-base align-middle mr-1">mic</span> Tap to Record
+        </button>
+
+        <!-- Result (shown after recording) -->
+        <div id="wiz-result" class="hidden">
+          <label class="text-xs text-on-surface-variant mb-1 block">Transcribed text (edit if needed)</label>
+          <input id="wiz-result-text" type="text" class="w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors" />
         </div>
-        <div class="flex justify-end">
-          <button id="snippet-add-btn" class="bg-primary text-on-primary text-xs font-bold px-4 py-2 rounded-lg hover:brightness-110 transition-all active:scale-[0.98] cursor-pointer">Add Snippet</button>
+
+        <!-- Navigation -->
+        <div class="flex justify-between pt-2">
+          <button id="wiz-cancel" class="text-xs font-semibold text-on-surface-variant hover:text-on-surface px-3 py-2 rounded-lg hover:bg-surface-container-highest transition-colors cursor-pointer">Cancel</button>
+          <button id="wiz-next" class="hidden bg-primary text-on-primary text-xs font-bold px-5 py-2 rounded-lg hover:brightness-110 transition-all active:scale-[0.98] cursor-pointer">Next</button>
         </div>
       </div>
     </div>

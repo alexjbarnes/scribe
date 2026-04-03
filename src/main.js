@@ -638,27 +638,137 @@ async function loadSnippets() {
   });
 }
 
-document.getElementById('snippet-add-btn').addEventListener('click', async () => {
-  const triggerEl = document.getElementById('snippet-trigger');
-  const bodyEl = document.getElementById('snippet-body');
-  const trigger = triggerEl.value.trim();
-  const body = bodyEl.value.trim();
-  if (!trigger || !body) {
-    showToast('Trigger and body are both required');
-    return;
+// ── Snippet creation wizard ──
+
+const wizSteps = [
+  { prompt: 'Say your trigger phrase', hint: 'This is how you will activate this snippet by voice' },
+  { prompt: 'Say it again to confirm', hint: 'A second recording helps the system handle pronunciation variations' },
+  { prompt: 'Now say the body text', hint: 'This is the text that will be pasted when the trigger is heard' },
+];
+let wizStep = 0;
+let wizData = []; // [trigger1, trigger2, body]
+let wizRecording = false;
+
+function wizShow() {
+  document.getElementById('snippet-create-btn-wrap').classList.add('hidden');
+  document.getElementById('snippet-wizard').classList.remove('hidden');
+  wizStep = 0;
+  wizData = [];
+  wizRecording = false;
+  wizRenderStep();
+}
+
+function wizHide() {
+  document.getElementById('snippet-wizard').classList.add('hidden');
+  document.getElementById('snippet-create-btn-wrap').classList.remove('hidden');
+}
+
+function wizRenderStep() {
+  const step = wizSteps[wizStep];
+  document.getElementById('wiz-prompt').textContent = step.prompt;
+  document.getElementById('wiz-hint').textContent = step.hint;
+  document.getElementById('wiz-step-label').textContent = `Step ${wizStep + 1} of 3`;
+  document.getElementById('wiz-result').classList.add('hidden');
+  document.getElementById('wiz-result-text').value = '';
+  document.getElementById('wiz-next').classList.add('hidden');
+  wizSetRecordBtn('idle');
+
+  // Update dots
+  for (let i = 1; i <= 3; i++) {
+    const dot = document.getElementById('wiz-dot-' + i);
+    dot.className = i <= wizStep + 1
+      ? 'w-2 h-2 rounded-full bg-primary'
+      : 'w-2 h-2 rounded-full bg-outline-variant/40';
   }
-  try {
-    await invoke('save_snippet', { trigger, body });
-    triggerEl.value = '';
-    bodyEl.value = '';
-    await loadSnippets();
-  } catch (err) {
-    showToast('Failed to save snippet: ' + err);
+}
+
+function wizSetRecordBtn(state) {
+  const btn = document.getElementById('wiz-record-btn');
+  if (state === 'idle') {
+    btn.innerHTML = '<span class="material-symbols-outlined text-base align-middle mr-1">mic</span> Tap to Record';
+    btn.className = 'w-full py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-[0.98] cursor-pointer bg-surface-container-highest text-on-surface border border-outline-variant/30 hover:bg-surface-container-high';
+  } else if (state === 'recording') {
+    const color = wizStep < 2 ? 'bg-[#FF9944]' : 'bg-error';
+    btn.innerHTML = '<span class="material-symbols-outlined text-base align-middle mr-1 animate-pulse">graphic_eq</span> Recording... Tap to Stop';
+    btn.className = `w-full py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-[0.98] cursor-pointer ${color} text-white`;
+  } else if (state === 'processing') {
+    btn.innerHTML = '<span class="material-symbols-outlined text-base align-middle mr-1 animate-spin">progress_activity</span> Transcribing...';
+    btn.className = 'w-full py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all cursor-not-allowed bg-surface-container-highest text-on-surface-variant border border-outline-variant/30';
+  }
+}
+
+document.getElementById('wiz-record-btn').addEventListener('click', async () => {
+  if (wizRecording) {
+    // Stop
+    wizRecording = false;
+    wizSetRecordBtn('processing');
+    try {
+      const text = await invoke('ui_stop_and_transcribe');
+      document.getElementById('wiz-result-text').value = text;
+      document.getElementById('wiz-result').classList.remove('hidden');
+      document.getElementById('wiz-next').classList.remove('hidden');
+      const isLast = wizStep === 2;
+      document.getElementById('wiz-next').textContent = isLast ? 'Save Snippet' : 'Next';
+      wizSetRecordBtn('idle');
+    } catch (err) {
+      showToast('Recording failed: ' + err);
+      wizSetRecordBtn('idle');
+    }
+  } else {
+    // Start
+    try {
+      await invoke('ui_start_recording');
+      wizRecording = true;
+      wizSetRecordBtn('recording');
+    } catch (err) {
+      showToast('Failed to start: ' + err);
+    }
   }
 });
 
-document.getElementById('snippet-trigger').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') document.getElementById('snippet-body').focus();
+document.getElementById('wiz-next').addEventListener('click', async () => {
+  const text = document.getElementById('wiz-result-text').value.trim();
+  if (!text) {
+    showToast('Text cannot be empty');
+    return;
+  }
+  wizData.push(text);
+
+  if (wizStep < 2) {
+    wizStep++;
+    wizRenderStep();
+  } else {
+    // All 3 steps done: wizData = [trigger1, trigger2, body]
+    try {
+      const snippet = await invoke('save_snippet', { trigger: wizData[0], body: wizData[2] });
+      // Add the second trigger (confirmation variant)
+      if (wizData[1] && wizData[1].toLowerCase() !== wizData[0].toLowerCase()) {
+        await invoke('add_snippet_trigger', { id: snippet.id, trigger: wizData[1] });
+      }
+      wizHide();
+      await loadSnippets();
+      showToast('Snippet saved');
+    } catch (err) {
+      showToast('Failed to save: ' + err);
+    }
+  }
+});
+
+document.getElementById('wiz-cancel').addEventListener('click', () => {
+  if (wizRecording) {
+    // Stop recording silently
+    invoke('ui_stop_and_transcribe').catch(() => {});
+    wizRecording = false;
+  }
+  wizHide();
+});
+
+document.getElementById('snippet-create-btn').addEventListener('click', () => {
+  if (!engineReady) {
+    showToast('Engine still loading...');
+    return;
+  }
+  wizShow();
 });
 
 // Snippet picker (no-match flow with self-healing)
