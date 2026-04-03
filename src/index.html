@@ -226,43 +226,8 @@
       </div>
     </div>
 
-    <!-- Create snippet button (default view) -->
-    <div id="snippet-create-btn-wrap">
-      <button id="snippet-create-btn" class="w-full bg-primary text-on-primary text-xs font-bold py-3 rounded-xl hover:brightness-110 transition-all active:scale-[0.98] cursor-pointer">Create Snippet</button>
-    </div>
-
-    <!-- Snippet creation wizard (hidden until Create is tapped) -->
-    <div id="snippet-wizard" class="hidden space-y-4">
-      <div class="bg-surface-container-low rounded-xl p-5 space-y-5">
-        <p class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">New snippet</p>
-
-        <!-- Step 1: Record trigger -->
-        <div>
-          <p class="text-sm text-on-surface font-medium mb-1">Trigger phrase</p>
-          <p class="text-xs text-on-surface-variant mb-3">Record how you will say this snippet's name</p>
-          <button id="wiz-record-btn" class="w-full py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-[0.98] cursor-pointer bg-surface-container-highest text-on-surface border border-outline-variant/30 hover:bg-surface-container-high">
-            <span class="material-symbols-outlined text-base align-middle mr-1">mic</span> Tap to Record
-          </button>
-          <div id="wiz-trigger-result" class="hidden mt-3">
-            <label class="text-xs text-on-surface-variant mb-1 block">Heard (edit if needed)</label>
-            <input id="wiz-trigger-text" type="text" class="w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors" />
-          </div>
-        </div>
-
-        <!-- Step 2: Type body -->
-        <div id="wiz-body-section" class="hidden">
-          <p class="text-sm text-on-surface font-medium mb-1">Body text</p>
-          <p class="text-xs text-on-surface-variant mb-2">The exact text to paste when the trigger is heard</p>
-          <textarea id="wiz-body-text" rows="3" placeholder="e.g. 123 Main St, London, EC1A 1BB" class="w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors resize-none"></textarea>
-        </div>
-
-        <!-- Navigation -->
-        <div class="flex justify-between pt-2">
-          <button id="wiz-cancel" class="text-xs font-semibold text-on-surface-variant hover:text-on-surface px-3 py-2 rounded-lg hover:bg-surface-container-highest transition-colors cursor-pointer">Cancel</button>
-          <button id="wiz-save" class="hidden bg-primary text-on-primary text-xs font-bold px-5 py-2 rounded-lg hover:brightness-110 transition-all active:scale-[0.98] cursor-pointer">Save Snippet</button>
-        </div>
-      </div>
-    </div>
+    <!-- Create snippet button -->
+    <button id="snippet-create-btn" class="w-full bg-primary text-on-primary text-xs font-bold py-3 rounded-xl hover:brightness-110 transition-all active:scale-[0.98] cursor-pointer">Create Snippet</button>
   </div>
 
   <!-- Snippet no-match picker dialog -->
@@ -274,6 +239,37 @@
       <div id="snippet-picker-list" class="space-y-1 max-h-48 overflow-y-auto mb-4"></div>
       <div class="flex justify-end gap-3">
         <button id="snippet-picker-cancel" class="px-4 py-2 text-sm font-medium text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors cursor-pointer">Dismiss</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Snippet creation modal -->
+  <div id="snippet-wizard" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 backdrop-blur-sm">
+    <div class="bg-surface-container-high rounded-2xl p-6 mx-4 max-w-sm w-full shadow-xl border border-outline-variant/20 space-y-5">
+      <p class="text-sm font-semibold text-on-surface">New Snippet</p>
+
+      <!-- Record trigger -->
+      <div>
+        <p class="text-xs text-on-surface-variant mb-2">Record how you will say this snippet's name</p>
+        <button id="wiz-record-btn" class="w-full py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-[0.98] cursor-pointer bg-surface-container-highest text-on-surface border border-outline-variant/30 hover:bg-surface-container-low">
+          <span class="material-symbols-outlined text-base align-middle mr-1">mic</span> Tap to Record
+        </button>
+        <div id="wiz-trigger-result" class="hidden mt-3">
+          <label class="text-xs text-on-surface-variant mb-1 block">Trigger (edit if needed)</label>
+          <input id="wiz-trigger-text" type="text" class="w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors" />
+        </div>
+      </div>
+
+      <!-- Body text -->
+      <div id="wiz-body-section" class="hidden">
+        <label class="text-xs text-on-surface-variant mb-1 block">Body text to paste</label>
+        <textarea id="wiz-body-text" rows="3" placeholder="e.g. 123 Main St, London, EC1A 1BB" class="w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors resize-none"></textarea>
+      </div>
+
+      <!-- Actions -->
+      <div class="flex justify-end gap-3">
+        <button id="wiz-cancel" class="px-4 py-2 text-sm font-medium text-on-surface-variant rounded-lg hover:bg-surface-container-highest transition-colors cursor-pointer">Cancel</button>
+        <button id="wiz-save" class="hidden px-4 py-2 text-sm font-medium text-on-primary bg-primary rounded-lg hover:brightness-110 transition-colors cursor-pointer">Save</button>
       </div>
     </div>
   </div>

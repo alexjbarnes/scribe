@@ -643,9 +643,6 @@ async function loadSnippets() {
 let wizRecording = false;
 
 function wizShow() {
-  document.getElementById('snippet-create-btn-wrap').classList.add('hidden');
-  const wiz = document.getElementById('snippet-wizard');
-  wiz.classList.remove('hidden');
   wizRecording = false;
   document.getElementById('wiz-trigger-result').classList.add('hidden');
   document.getElementById('wiz-trigger-text').value = '';
@@ -653,11 +650,15 @@ function wizShow() {
   document.getElementById('wiz-body-text').value = '';
   document.getElementById('wiz-save').classList.add('hidden');
   wizSetRecordBtn('idle');
+  const wiz = document.getElementById('snippet-wizard');
+  wiz.classList.remove('hidden');
+  wiz.classList.add('flex');
 }
 
 function wizHide() {
-  document.getElementById('snippet-wizard').classList.add('hidden');
-  document.getElementById('snippet-create-btn-wrap').classList.remove('hidden');
+  const wiz = document.getElementById('snippet-wizard');
+  wiz.classList.add('hidden');
+  wiz.classList.remove('flex');
 }
 
 function wizSetRecordBtn(state) {
