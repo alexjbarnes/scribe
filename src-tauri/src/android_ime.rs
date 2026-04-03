@@ -55,6 +55,7 @@ pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeI
         return JNI_FALSE;
     }
     crate::history::History::init_global();
+    crate::snippets::SnippetManager::init_global();
     crate::postprocess::grammar_neural::init_global();
 
     let mgr = ModelManager::global();
@@ -158,6 +159,38 @@ pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeS
             Err(_) => null_ptr,
         },
         None => null_ptr,
+    }
+}
+
+/// Match transcribed text against snippets. Returns the snippet body if a
+/// trigger matches (exact or fuzzy), otherwise returns null.
+#[no_mangle]
+pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeMatchSnippet(
+    mut env: JNIEnv,
+    _class: JClass,
+    text: JString,
+) -> jstring {
+    let text: String = match env.get_string(&text) {
+        Ok(s) => s.into(),
+        Err(e) => {
+            log::error!("Overlay: failed to read snippet text: {e}");
+            return std::ptr::null_mut();
+        }
+    };
+
+    let mgr = crate::snippets::SnippetManager::global();
+    match mgr.find_match(&text) {
+        Some(snippet) => {
+            log::info!("Overlay: snippet matched: id={}", snippet.id);
+            match env.new_string(&snippet.body) {
+                Ok(s) => s.into_raw(),
+                Err(_) => std::ptr::null_mut(),
+            }
+        }
+        None => {
+            log::info!("Overlay: no snippet match for \"{}\"", text);
+            std::ptr::null_mut()
+        }
     }
 }
 

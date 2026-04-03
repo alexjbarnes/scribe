@@ -43,6 +43,8 @@ class VerbaAccessibilityService : AccessibilityService() {
         @JvmStatic
         private external fun nativeStopAndTranscribe(): String?
         @JvmStatic
+        private external fun nativeMatchSnippet(text: String): String?
+        @JvmStatic
         private external fun nativeDestroy()
         @JvmStatic
         private external fun nativeLog(level: Int, msg: String)
@@ -65,10 +67,13 @@ class VerbaAccessibilityService : AccessibilityService() {
     private var isOverlayShowing = false
     private var focusedNode: AccessibilityNodeInfo? = null
 
-    // Drag state
+    // Drag + long-press state
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var isDragging = false
+    @Volatile private var snippetMode = false
+    private var longPressRunnable: Runnable? = null
+    private val longPressDelayMs = 500L
 
     private var ringView: RoundedRingView? = null
     private var ringAnimator: ValueAnimator? = null
@@ -345,6 +350,14 @@ class VerbaAccessibilityService : AccessibilityService() {
                 isDragging = false
                 micButton?.scaleX = 0.85f
                 micButton?.scaleY = 0.85f
+
+                // Schedule long-press → snippet mode
+                longPressRunnable = Runnable {
+                    if (!isDragging && !recording && !processing) {
+                        startSnippetRecording()
+                    }
+                }
+                mainHandler.postDelayed(longPressRunnable!!, longPressDelayMs)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
@@ -352,6 +365,7 @@ class VerbaAccessibilityService : AccessibilityService() {
                 val dy = event.rawY - lastTouchY
                 if (abs(dx) > 8 || abs(dy) > 8 || isDragging) {
                     isDragging = true
+                    cancelLongPress()
                     micButton?.scaleX = 1.0f
                     micButton?.scaleY = 1.0f
                     val params = overlayView?.layoutParams as? WindowManager.LayoutParams
@@ -366,9 +380,14 @@ class VerbaAccessibilityService : AccessibilityService() {
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                cancelLongPress()
                 micButton?.scaleX = 1.0f
                 micButton?.scaleY = 1.0f
-                if (!isDragging) {
+
+                if (snippetMode && recording) {
+                    // Finger lifted after long-press snippet recording
+                    stopAndMatchSnippet()
+                } else if (!isDragging) {
                     onMicClick()
                 } else {
                     val params = overlayView?.layoutParams as? WindowManager.LayoutParams
@@ -382,6 +401,11 @@ class VerbaAccessibilityService : AccessibilityService() {
             }
         }
         return false
+    }
+
+    private fun cancelLongPress() {
+        longPressRunnable?.let { mainHandler.removeCallbacks(it) }
+        longPressRunnable = null
     }
 
     private fun showOverlay() {
@@ -457,9 +481,9 @@ class VerbaAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun startRecordingRing() {
+    private fun startRecordingRing(snippet: Boolean = false) {
         ringView?.let { ring ->
-            ring.setColor(0xFFFF4444.toInt())
+            ring.setColor(if (snippet) 0xFFFF9944.toInt() else 0xFFFF4444.toInt())
             ring.visibility = View.VISIBLE
             ringAnimator?.cancel()
             ringAnimator = ValueAnimator.ofFloat(1f, 0f).apply {
@@ -535,6 +559,67 @@ class VerbaAccessibilityService : AccessibilityService() {
                     logW("no text returned from transcription")
                     hideRing()
                     toast("No speech detected")
+                }
+            }
+        }
+    }
+
+    private fun startSnippetRecording() {
+        if (!initialized || processing || recording) return
+        logI("startSnippetRecording (long-press)")
+        snippetMode = true
+        recording = true
+        hapticFeedback()
+        startRecordingRing(snippet = true)
+
+        executor.execute {
+            val started = nativeStartRecording()
+            logI("snippet nativeStartRecording returned $started")
+            if (!started) {
+                mainHandler.post {
+                    snippetMode = false
+                    recording = false
+                    hideRing()
+                    toast("Failed to start recording")
+                }
+            }
+        }
+    }
+
+    private fun stopAndMatchSnippet() {
+        logI("stopAndMatchSnippet")
+        recording = false
+        processing = true
+        hapticFeedback()
+        showProcessingRing()
+
+        executor.execute {
+            val text = nativeStopAndTranscribe()
+            logI("snippet transcribed: ${text?.take(80) ?: "(null)"}")
+            if (text.isNullOrEmpty()) {
+                mainHandler.post {
+                    snippetMode = false
+                    processing = false
+                    hideRing()
+                    toast("No speech detected")
+                }
+                return@execute
+            }
+
+            val body = try { nativeMatchSnippet(text) } catch (e: Exception) {
+                logE("nativeMatchSnippet failed: $e")
+                null
+            }
+            mainHandler.post {
+                snippetMode = false
+                processing = false
+                if (body != null) {
+                    logI("snippet matched, injecting body (${body.length} chars)")
+                    flashCompleteRing()
+                    injectText(body)
+                } else {
+                    hideRing()
+                    toast("No snippet matched")
                 }
             }
         }

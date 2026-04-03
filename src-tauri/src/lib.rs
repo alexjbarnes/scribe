@@ -483,7 +483,7 @@ pub fn run() {
                                 Some(Ok(())) => {
                                     state.recording.store(true, Ordering::SeqCst);
                                     sound::play_start();
-                                    let _ = app_handle_s.emit("dictation-state", "recording");
+                                    let _ = app_handle_s.emit("dictation-state", "snippet-recording");
                                     log::info!("Snippet shortcut: recording started");
                                 }
                                 Some(Err(e)) => {
