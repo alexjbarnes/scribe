@@ -64,15 +64,43 @@
 </head>
 <body class="bg-surface text-on-surface font-sans antialiased overflow-hidden h-screen flex flex-col select-none">
 
-  <!-- Tab navigation -->
-  <nav class="flex border-b border-outline-variant/30 px-2 pt-1 shrink-0 bg-surface-container-low" data-tauri-drag-region>
-    <button class="tab-btn px-4 py-3 text-xs font-semibold uppercase tracking-wider border-b-2 border-primary text-primary transition-colors" data-tab="history">History</button>
-    <button class="tab-btn px-4 py-3 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-on-surface-variant hover:text-on-surface transition-colors" data-tab="models">Models</button>
-    <button class="tab-btn px-4 py-3 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-on-surface-variant hover:text-on-surface transition-colors" data-tab="audio">Audio</button>
-    <button class="tab-btn px-4 py-3 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-on-surface-variant hover:text-on-surface transition-colors" data-tab="snippets">Snippets</button>
-    <button class="tab-btn px-4 py-3 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-on-surface-variant hover:text-on-surface transition-colors" data-tab="general">Settings</button>
-    <button class="tab-btn px-4 py-3 text-xs font-semibold uppercase tracking-wider border-b-2 border-transparent text-on-surface-variant hover:text-on-surface transition-colors" data-tab="debug">Debug</button>
-  </nav>
+  <!-- Top bar -->
+  <header class="flex items-center gap-3 px-4 py-3 shrink-0 bg-surface-container-low border-b border-outline-variant/30" data-tauri-drag-region>
+    <button id="sidebar-toggle" class="text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer p-1 -ml-1 rounded-lg hover:bg-surface-container-highest">
+      <span class="material-symbols-outlined text-xl">menu</span>
+    </button>
+    <h1 id="page-title" class="text-sm font-semibold text-on-surface tracking-tight">History</h1>
+  </header>
+
+  <!-- Sidebar overlay -->
+  <div id="sidebar-overlay" class="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm hidden"></div>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="fixed top-0 left-0 z-50 h-full w-64 bg-surface-container-low border-r border-outline-variant/30 -translate-x-full transition-transform duration-200 ease-out flex flex-col" style="padding-top: env(safe-area-inset-top);">
+    <div class="px-5 py-4 border-b border-outline-variant/20">
+      <p class="text-base font-bold text-on-surface tracking-tight">Scribe</p>
+    </div>
+    <nav class="flex-1 py-2 overflow-y-auto">
+      <button class="nav-btn w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-primary bg-primary/10 transition-colors cursor-pointer" data-tab="history">
+        <span class="material-symbols-outlined text-lg">history</span> History
+      </button>
+      <button class="nav-btn w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer" data-tab="models">
+        <span class="material-symbols-outlined text-lg">layers</span> Models
+      </button>
+      <button class="nav-btn w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer" data-tab="audio">
+        <span class="material-symbols-outlined text-lg">mic</span> Audio
+      </button>
+      <button class="nav-btn w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer" data-tab="snippets">
+        <span class="material-symbols-outlined text-lg">sticky_note_2</span> Snippets
+      </button>
+      <button class="nav-btn w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer" data-tab="general">
+        <span class="material-symbols-outlined text-lg">settings</span> Settings
+      </button>
+      <button class="nav-btn w-full flex items-center gap-3 px-5 py-3 text-sm font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest transition-colors cursor-pointer" data-tab="debug">
+        <span class="material-symbols-outlined text-lg">bug_report</span> Debug
+      </button>
+    </nav>
+  </aside>
 
   <!-- History tab -->
   <div id="history" class="tab-panel flex-1 overflow-y-auto px-5 py-6 flex flex-col">
@@ -246,18 +274,15 @@
   <!-- Snippet creation modal -->
   <div id="snippet-wizard" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 backdrop-blur-sm">
     <div class="bg-surface-container-high rounded-2xl p-6 mx-4 max-w-sm w-full shadow-xl border border-outline-variant/20 space-y-5">
-      <p class="text-sm font-semibold text-on-surface">New Snippet</p>
+      <p id="wiz-title" class="text-sm font-semibold text-on-surface">New Snippet</p>
 
-      <!-- Record trigger -->
+      <!-- Triggers -->
       <div>
-        <p class="text-xs text-on-surface-variant mb-2">Record how you will say this snippet's name</p>
-        <button id="wiz-record-btn" class="w-full py-3 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-[0.98] cursor-pointer bg-surface-container-highest text-on-surface border border-outline-variant/30 hover:bg-surface-container-low">
-          <span class="material-symbols-outlined text-base align-middle mr-1">mic</span> Tap to Record
+        <p class="text-xs text-on-surface-variant mb-2">Trigger phrases</p>
+        <div id="wiz-trigger-list" class="flex flex-wrap gap-1.5 mb-3 min-h-[28px]"></div>
+        <button id="wiz-record-btn" class="w-full py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest transition-all active:scale-[0.98] cursor-pointer bg-surface-container-highest text-on-surface border border-outline-variant/30 hover:bg-surface-container-low">
+          <span class="material-symbols-outlined text-base align-middle mr-1">mic</span> Record Trigger
         </button>
-        <div id="wiz-trigger-result" class="hidden mt-3">
-          <label class="text-xs text-on-surface-variant mb-1 block">Trigger (edit if needed)</label>
-          <input id="wiz-trigger-text" type="text" class="w-full bg-surface-container-highest border border-outline-variant/30 rounded-lg px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-1 focus:ring-primary/50 transition-colors" />
-        </div>
       </div>
 
       <!-- Body text -->

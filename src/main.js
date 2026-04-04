@@ -23,23 +23,48 @@ function showConfirm(message) {
   });
 }
 
-// ── Tab switching ──
+// ── Sidebar & navigation ──
 
-document.querySelectorAll('.tab-btn').forEach(btn => {
+const sidebar = document.getElementById('sidebar');
+const sidebarOverlay = document.getElementById('sidebar-overlay');
+const pageTitle = document.getElementById('page-title');
+
+const tabLabels = {
+  history: 'History', models: 'Models', audio: 'Audio',
+  snippets: 'Snippets', general: 'Settings', debug: 'Debug',
+};
+
+function openSidebar() {
+  sidebar.classList.remove('-translate-x-full');
+  sidebarOverlay.classList.remove('hidden');
+}
+
+function closeSidebar() {
+  sidebar.classList.add('-translate-x-full');
+  sidebarOverlay.classList.add('hidden');
+}
+
+document.getElementById('sidebar-toggle').addEventListener('click', openSidebar);
+sidebarOverlay.addEventListener('click', closeSidebar);
+
+document.querySelectorAll('.nav-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => {
-      b.classList.remove('border-primary', 'text-primary');
-      b.classList.add('border-transparent', 'text-on-surface-variant');
+    document.querySelectorAll('.nav-btn').forEach(b => {
+      b.classList.remove('text-primary', 'bg-primary/10');
+      b.classList.add('text-on-surface-variant');
     });
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.add('hidden'));
 
-    btn.classList.remove('border-transparent', 'text-on-surface-variant');
-    btn.classList.add('border-primary', 'text-primary');
+    btn.classList.remove('text-on-surface-variant');
+    btn.classList.add('text-primary', 'bg-primary/10');
     document.getElementById(btn.dataset.tab).classList.remove('hidden');
+    pageTitle.textContent = tabLabels[btn.dataset.tab] || '';
+
+    closeSidebar();
 
     // Refresh data when switching to relevant tabs
-    if (btn.dataset.tab === 'tab-history') loadHistory();
-    if (btn.dataset.tab === 'tab-models') loadModels();
+    if (btn.dataset.tab === 'history') loadHistory();
+    if (btn.dataset.tab === 'models') loadModels();
     if (btn.dataset.tab === 'general') loadVocab();
     if (btn.dataset.tab === 'snippets') loadSnippets();
   });
@@ -611,7 +636,7 @@ async function loadSnippets() {
     const row = document.createElement('div');
     row.className = 'flex items-start justify-between gap-3 px-4 py-3';
     row.innerHTML = `
-      <div class="min-w-0 flex-1">
+      <div class="min-w-0 flex-1 snippet-edit-target cursor-pointer" data-id="${escapeHtml(snippet.id)}">
         <div class="flex flex-wrap gap-1 mb-1">
           ${snippet.triggers.map(t =>
             `<span class="text-xs font-mono bg-primary/10 text-primary px-2 py-0.5 rounded">${escapeHtml(t)}</span>`
@@ -624,6 +649,13 @@ async function loadSnippets() {
       </button>`;
     snippetList.appendChild(row);
   }
+
+  snippetList.querySelectorAll('.snippet-edit-target').forEach(el => {
+    el.addEventListener('click', () => {
+      const snippet = items.find(s => s.id === el.dataset.id);
+      if (snippet) wizShowEdit(snippet);
+    });
+  });
 
   snippetList.querySelectorAll('.snippet-del-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -638,18 +670,37 @@ async function loadSnippets() {
   });
 }
 
-// ── Snippet creation wizard ──
+// ── Snippet creation/edit wizard ──
 
 let wizRecording = false;
+let wizEditId = null; // null = create mode, string = edit mode
+let wizTriggers = []; // current list of trigger phrases
 
 function wizShow() {
   wizRecording = false;
-  document.getElementById('wiz-trigger-result').classList.add('hidden');
-  document.getElementById('wiz-trigger-text').value = '';
+  wizEditId = null;
+  wizTriggers = [];
+  document.getElementById('wiz-title').textContent = 'New Snippet';
   document.getElementById('wiz-body-section').classList.add('hidden');
   document.getElementById('wiz-body-text').value = '';
   document.getElementById('wiz-save').classList.add('hidden');
   wizSetRecordBtn('idle');
+  wizRenderTriggers();
+  const wiz = document.getElementById('snippet-wizard');
+  wiz.classList.remove('hidden');
+  wiz.classList.add('flex');
+}
+
+function wizShowEdit(snippet) {
+  wizRecording = false;
+  wizEditId = snippet.id;
+  wizTriggers = [...snippet.triggers];
+  document.getElementById('wiz-title').textContent = 'Edit Snippet';
+  document.getElementById('wiz-body-text').value = snippet.body;
+  document.getElementById('wiz-body-section').classList.remove('hidden');
+  document.getElementById('wiz-save').classList.remove('hidden');
+  wizSetRecordBtn('idle');
+  wizRenderTriggers();
   const wiz = document.getElementById('snippet-wizard');
   wiz.classList.remove('hidden');
   wiz.classList.add('flex');
@@ -659,6 +710,44 @@ function wizHide() {
   const wiz = document.getElementById('snippet-wizard');
   wiz.classList.add('hidden');
   wiz.classList.remove('flex');
+}
+
+function wizAddTrigger(text) {
+  const t = text.trim();
+  if (!t) return;
+  if (!wizTriggers.some(x => x.toLowerCase() === t.toLowerCase())) {
+    wizTriggers.push(t);
+  }
+  wizRenderTriggers();
+  wizUpdateSections();
+}
+
+function wizRemoveTrigger(index) {
+  wizTriggers.splice(index, 1);
+  wizRenderTriggers();
+  wizUpdateSections();
+}
+
+function wizRenderTriggers() {
+  const list = document.getElementById('wiz-trigger-list');
+  list.innerHTML = wizTriggers.map((t, i) =>
+    `<span class="inline-flex items-center gap-1 text-xs font-mono bg-primary/10 text-primary px-2 py-0.5 rounded">
+      ${escapeHtml(t)}
+      <button class="wiz-trigger-del hover:text-error cursor-pointer" data-index="${i}">
+        <span class="material-symbols-outlined" style="font-size:14px">close</span>
+      </button>
+    </span>`
+  ).join('');
+  list.querySelectorAll('.wiz-trigger-del').forEach(btn => {
+    btn.addEventListener('click', () => wizRemoveTrigger(parseInt(btn.dataset.index)));
+  });
+}
+
+function wizUpdateSections() {
+  const hasTriggers = wizTriggers.length > 0;
+  document.getElementById('wiz-body-section').classList.toggle('hidden', !hasTriggers);
+  const hasBody = document.getElementById('wiz-body-text').value.trim();
+  document.getElementById('wiz-save').classList.toggle('hidden', !hasTriggers);
 }
 
 function wizSetRecordBtn(state) {
@@ -683,11 +772,8 @@ document.getElementById('wiz-record-btn').addEventListener('click', async () => 
     wizRecording = false;
     wizSetRecordBtn('processing');
     try {
-      const text = await invoke('ui_stop_and_transcribe');
-      document.getElementById('wiz-trigger-text').value = text;
-      document.getElementById('wiz-trigger-result').classList.remove('hidden');
-      document.getElementById('wiz-body-section').classList.remove('hidden');
-      document.getElementById('wiz-save').classList.remove('hidden');
+      const text = await invoke('ui_stop_and_transcribe_raw');
+      wizAddTrigger(text);
       wizSetRecordBtn('idle');
     } catch (err) {
       showToast('Recording failed: ' + err);
@@ -705,15 +791,27 @@ document.getElementById('wiz-record-btn').addEventListener('click', async () => 
 });
 
 document.getElementById('wiz-save').addEventListener('click', async () => {
-  const trigger = document.getElementById('wiz-trigger-text').value.trim();
   const body = document.getElementById('wiz-body-text').value.trim();
-  if (!trigger) { showToast('Trigger cannot be empty'); return; }
+  if (wizTriggers.length === 0) { showToast('Add at least one trigger'); return; }
   if (!body) { showToast('Body text cannot be empty'); return; }
   try {
-    await invoke('save_snippet', { trigger, body });
+    if (wizEditId) {
+      await invoke('update_snippet', { id: wizEditId, triggers: wizTriggers, body });
+      showToast('Snippet updated');
+    } else {
+      await invoke('save_snippet', { trigger: wizTriggers[0], body });
+      // Add any extra triggers
+      if (wizTriggers.length > 1) {
+        const snippets = await invoke('list_snippets');
+        const newest = snippets[snippets.length - 1];
+        for (let i = 1; i < wizTriggers.length; i++) {
+          await invoke('add_snippet_trigger', { id: newest.id, trigger: wizTriggers[i] });
+        }
+      }
+      showToast('Snippet saved');
+    }
     wizHide();
     await loadSnippets();
-    showToast('Snippet saved');
   } catch (err) {
     showToast('Failed to save: ' + err);
   }
@@ -721,7 +819,7 @@ document.getElementById('wiz-save').addEventListener('click', async () => {
 
 document.getElementById('wiz-cancel').addEventListener('click', () => {
   if (wizRecording) {
-    invoke('ui_stop_and_transcribe').catch(() => {});
+    invoke('ui_stop_and_transcribe_raw').catch(() => {});
     wizRecording = false;
   }
   wizHide();
@@ -840,6 +938,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
   await loadVocab();
   await loadSnippets();
+
+  if (!engineReady && await invoke('is_engine_ready')) {
+    engineReady = true;
+  }
 
   document.getElementById('save-config').addEventListener('click', saveConfig);
 });

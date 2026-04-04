@@ -8,6 +8,7 @@
 #   just apk-release   # build release APK
 #   just test          # run Rust tests
 #   just check         # cargo check
+#   just eval          # run pipeline eval harness against test cases
 #   just clean         # clean all build artifacts
 
 # ── Configuration ──
@@ -118,6 +119,11 @@ _setup-sherpa-desktop:
     tar -xzf "$CACHE/$ORT_ARCHIVE" -C "$CACHE"
     cp "$CACHE/$ORT_STEM/lib/$ORT_LIBNAME" "$LIB_DIR/"
     ln -sf "$ORT_LIBNAME" "$LIB_DIR/$ORT_LINK"
+    # soname symlink (e.g. libonnxruntime.so.1) needed at runtime
+    SONAME=$(echo "$ORT_LIBNAME" | sed 's/\.[0-9]*\.[0-9]*$//')
+    if [ "$SONAME" != "$ORT_LIBNAME" ] && [ "$SONAME" != "$ORT_LINK" ]; then
+        ln -sf "$ORT_LIBNAME" "$LIB_DIR/$SONAME"
+    fi
 
     # Replace libonnxruntime.a with an empty stub archive.
     # sherpa-onnx-sys emits `static=onnxruntime` which expects this file,
@@ -178,6 +184,25 @@ test:
 # Cargo check (fast compile check)
 check:
     cd {{tauri_dir}} && cargo check
+
+# Run pipeline eval harness (pass extra args after --)
+eval *ARGS:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    ORT_LIB_DIR="{{desktop_deps}}/sherpa-onnx/lib"
+    # Find the versioned ORT shared library for ort crate's load-dynamic
+    ORT_DYLIB=$(find "$ORT_LIB_DIR" -name 'libonnxruntime.so.*.*' -o -name 'libonnxruntime.*.dylib' 2>/dev/null | head -1)
+    if [ -z "${ORT_DYLIB:-}" ]; then
+        echo "ERROR: ORT shared library not found in $ORT_LIB_DIR"
+        echo "Run: just setup"
+        exit 1
+    fi
+    cd {{tauri_dir}}
+    SHERPA_ONNX_LIB_DIR="$ORT_LIB_DIR" \
+        ORT_DYLIB_PATH="$ORT_DYLIB" \
+        LD_LIBRARY_PATH="$ORT_LIB_DIR:${LD_LIBRARY_PATH:-}" \
+        DYLD_LIBRARY_PATH="$ORT_LIB_DIR:${DYLD_LIBRARY_PATH:-}" \
+        cargo run --bin eval_pipeline -- {{ARGS}}
 
 # Clean all build artifacts
 clean:

@@ -9,6 +9,7 @@ just apk            # Build debug Android APK (signed, ~51MB)
 just apk-release    # Build release APK
 just test           # Run Rust library tests (cargo test --lib in src-tauri/)
 just check          # Fast compile check (no linking)
+just eval           # Run pipeline eval harness (see below)
 just clean          # Clean all build artifacts (cargo + gradle)
 ```
 

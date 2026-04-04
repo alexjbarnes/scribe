@@ -1,0 +1,231 @@
+[
+  {
+    "text": "your going to love this new feature",
+    "label": 0,
+    "category": "FN / homophone: your instead of you're"
+  },
+  {
+    "text": "its going to take longer than expected",
+    "label": 0,
+    "category": "FN / homophone: its instead of it's"
+  },
+  {
+    "text": "I should of called them earlier",
+    "label": 0,
+    "category": "FN / should of instead of should have"
+  },
+  {
+    "text": "could of been a lot worse",
+    "label": 0,
+    "category": "FN / could of instead of could have"
+  },
+  {
+    "text": "earlier today I fix the bug and deploy it",
+    "label": 0,
+    "category": "FN / tense: fix and deploy should be past"
+  },
+  {
+    "text": "their is a problem with the build",
+    "label": 0,
+    "category": "homophone: their instead of there"
+  },
+  {
+    "text": "we need to look at there approach",
+    "label": 0,
+    "category": "homophone: there instead of their"
+  },
+  {
+    "text": "a apple fell from the tree",
+    "label": 0,
+    "category": "article: a instead of an before vowel"
+  },
+  {
+    "text": "he walk to the office every day",
+    "label": 0,
+    "category": "agreement: walk instead of walks"
+  },
+  {
+    "text": "the team have completed the project",
+    "label": 0,
+    "category": "agreement: have instead of has"
+  },
+  {
+    "text": "we was looking at the data yesterday",
+    "label": 0,
+    "category": "agreement: was instead of were"
+  },
+  {
+    "text": "yesterday I remove all the old log files",
+    "label": 0,
+    "category": "tense: remove instead of removed"
+  },
+  {
+    "text": "I use thing phrases like check out a new branch from Maine, pull from Maine first and then call it this.",
+    "label": 0,
+    "category": "ASR error: thing phrases instead of things/phrases, missing verb forms",
+    "score": 0.268
+  },
+  {
+    "text": "And then you might for CP, you would unwrap that into the full snippet and then just paste it.",
+    "label": 0,
+    "category": "ASR error: might for instead of might want to",
+    "score": 0.205
+  },
+  {
+    "text": "I was thinking that maybe we could have a separate trigger, so hold a different hotkey or hold the Android overlay icon as a long press instead to trigger it.",
+    "label": 0,
+    "category": "ASR error: instead to trigger instead of instead of triggering",
+    "score": 0.480
+  },
+  {
+    "text": "commands for things like commit and push. I could just say CP instead.",
+    "label": 0,
+    "category": "missing article before commit (borderline)",
+    "score": 0.710
+  },
+  {
+    "text": "and have all the models loaded and everything.",
+    "label": 0,
+    "category": "sentence fragment starting with and, missing subject",
+    "score": 0.369
+  },
+  {
+    "text": "There should be a ticket in Linear for it already.",
+    "label": 1,
+    "category": "FP / Linear is a product name, corrector changed to line",
+    "score": 0.211
+  },
+  {
+    "text": "The create snippet button isn't working.",
+    "label": 1,
+    "category": "FP risk / compound noun scores low but is acceptable",
+    "score": 0.343
+  },
+  {
+    "text": "The quick brown fox jumps over the lazy dog.",
+    "label": 1,
+    "category": "clean pangram"
+  },
+  {
+    "text": "I want to schedule a meeting for tomorrow at 3pm.",
+    "label": 1,
+    "category": "clean dictation"
+  },
+  {
+    "text": "We deployed the new API endpoint to production yesterday.",
+    "label": 1,
+    "category": "clean technical"
+  },
+  {
+    "text": "Please send me the report by end of day.",
+    "label": 1,
+    "category": "clean imperative"
+  },
+  {
+    "text": "The function returns a list of strings.",
+    "label": 1,
+    "category": "clean technical"
+  },
+  {
+    "text": "The PR is in review and CI is green.",
+    "label": 1,
+    "category": "clean technical abbreviations"
+  },
+  {
+    "text": "API endpoints need to be REST-compliant.",
+    "label": 1,
+    "category": "clean technical"
+  },
+  {
+    "text": "we remove old logs every Friday",
+    "label": 1,
+    "category": "clean habitual present tense"
+  },
+  {
+    "text": "the server lost its connection",
+    "label": 1,
+    "category": "clean possessive its"
+  },
+  {
+    "text": "Can you investigate and report back why that is?",
+    "label": 1,
+    "category": "clean question"
+  },
+  {
+    "text": "Don't make any changes.",
+    "label": 1,
+    "category": "clean imperative with negation"
+  },
+  {
+    "text": "I was wondering if we could look at doing something like that.",
+    "label": 1,
+    "category": "clean spoken / correct grammar",
+    "score": 0.909
+  },
+  {
+    "text": "Quite a lot.",
+    "label": 1,
+    "category": "clean short phrase",
+    "score": 0.896
+  },
+  {
+    "text": "Or various Git things and stuff like that.",
+    "label": 1,
+    "category": "clean informal spoken",
+    "score": 0.908
+  },
+  {
+    "text": "They'd be useful.",
+    "label": 1,
+    "category": "clean contraction",
+    "score": 0.920
+  },
+  {
+    "text": "If I could just create custom",
+    "label": 1,
+    "category": "clean fragment (trailing sentence)",
+    "score": 0.900
+  },
+  {
+    "text": "Yes, I think it should be a separate feature.",
+    "label": 1,
+    "category": "clean spoken",
+    "score": 0.924
+  },
+  {
+    "text": "And then that would make things a bit simpler.",
+    "label": 1,
+    "category": "clean spoken",
+    "score": 0.921
+  },
+  {
+    "text": "Okay, can we add this to the test cases we've been collecting please?",
+    "label": 1,
+    "category": "clean question",
+    "score": 0.926
+  },
+  {
+    "text": "Right, let's just kill it. Can we build a test harness around the Rust code so that we can run these whenever we want? It should just take a file.",
+    "label": 1,
+    "category": "clean multi-sentence spoken",
+    "score": 0.849
+  },
+  {
+    "text": "How do I get marked as a lever?",
+    "label": 1,
+    "category": "FN / ASR wrong word (lever instead of leader/leaver) but grammatically valid",
+    "score": 0.916
+  },
+  {
+    "text": "Okay, thank you for your help.",
+    "label": 1,
+    "category": "clean polite",
+    "score": 0.927
+  },
+  {
+    "text": "So you would say a short phrase and then that expands it out.",
+    "label": 1,
+    "category": "clean spoken",
+    "score": 0.740
+  }
+]

@@ -9,7 +9,8 @@ fn main() {
         "cola_model_quantized.onnx",
         "cola_tokenizer.json",
         "encoder_model_quantized.onnx",
-        "decoder_model_quantized.onnx",
+        "decoder_with_past_quantized.onnx",
+        "cross_attn_kv_weights.bin",
         "t5_tokenizer.json",
     ];
     let grammar_bundled = grammar_files.iter().all(|f| grammar_dir.join(f).exists());
@@ -19,6 +20,7 @@ fn main() {
     for f in &grammar_files {
         println!("cargo:rerun-if-changed=data/grammar/{f}");
     }
+    println!("cargo:rerun-if-changed=data/grammar/config.json");
 
     // Desktop shared-ORT setup (mirrors Android pattern).
     // When SHERPA_ONNX_LIB_DIR contains a .shared-ort marker, the directory

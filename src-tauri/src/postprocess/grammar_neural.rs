@@ -1,22 +1,21 @@
-//! Stage 4 (neural path): grammar router + t5-efficient-tiny corrector.
+//! Stage 4 (neural path): grammar router + corrector.
 //!
 //! Model files are embedded at compile time from `data/grammar/`. If those
 //! files are absent when the crate is built the entire stage compiles out
 //! and the pipeline falls back to nlprule silently.
 //!
-//! Router:    pszemraj/electra-small-discriminator-CoLA  (~4ms, 14MB INT8)
-//! Corrector: visheratin/t5-efficient-tiny-grammar-correction (~50ms, 44MB INT8)
+//! Model-specific parameters (input prefix, encoder output name, thresholds)
+//! are read from `data/grammar/config.json` at compile time. To swap models,
+//! replace the ONNX/tokenizer files and update config.json, then rebuild.
 //!
 //! To enable: place the following files in src-tauri/data/grammar/ then rebuild:
-//!   cola_model_quantized.onnx     — grammar router model (ELECTRA-based)
-//!   cola_tokenizer.json           — grammar router tokenizer
-//!   encoder_model_quantized.onnx  — T5 encoder
-//!   decoder_model_quantized.onnx  — T5 decoder (greedy, no KV cache)
-//!   t5_tokenizer.json             — SentencePiece tokenizer for T5
-//!
-//! Generate them with:
-//!   python scripts/export_cola_onnx.py --output-dir src-tauri/data/grammar/
-//!   python scripts/download_t5_grammar_onnx.py --output-dir src-tauri/data/grammar/
+//!   cola_model_quantized.onnx          - grammar router model (CoLA classifier)
+//!   cola_tokenizer.json                - grammar router tokenizer
+//!   encoder_model_quantized.onnx       - corrector encoder
+//!   decoder_with_past_quantized.onnx   - corrector decoder with KV cache
+//!   cross_attn_kv_weights.bin          - cross-attention K/V projection weights (8x [256,256] f32)
+//!   t5_tokenizer.json                  - corrector tokenizer
+//!   config.json                        - model parameters (prefix, thresholds, etc.)
 
 /// Per-sentence routing and correction result, stored in pipeline history.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -42,8 +41,44 @@ mod bundled {
     static ENC_MODEL_BYTES: &[u8] =
         include_bytes!("../../data/grammar/encoder_model_quantized.onnx");
     static DEC_MODEL_BYTES: &[u8] =
-        include_bytes!("../../data/grammar/decoder_model_quantized.onnx");
+        include_bytes!("../../data/grammar/decoder_with_past_quantized.onnx");
+    static CROSS_ATTN_WEIGHTS: &[u8] =
+        include_bytes!("../../data/grammar/cross_attn_kv_weights.bin");
     static T5_TOKENIZER_BYTES: &[u8] = include_bytes!("../../data/grammar/t5_tokenizer.json");
+    static CONFIG_BYTES: &str = include_str!("../../data/grammar/config.json");
+
+    /// Runtime-configurable parameters loaded from config.json.
+    #[derive(serde::Deserialize)]
+    struct Config {
+        router: RouterConfig,
+        corrector: CorrectorConfig,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct RouterConfig {
+        threshold: f32,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CorrectorConfig {
+        #[serde(default)]
+        input_prefix: String,
+        #[serde(default = "default_encoder_hidden_name")]
+        encoder_hidden_name: String,
+        #[serde(default = "default_eos_token_id")]
+        eos_token_id: i64,
+        #[serde(default)]
+        decoder_start_token_id: i64,
+        #[serde(default = "default_sentence_split_threshold")]
+        sentence_split_threshold: usize,
+        #[serde(default = "default_decode_headroom")]
+        decode_headroom: usize,
+    }
+
+    fn default_encoder_hidden_name() -> String { "hidden_states".into() }
+    fn default_eos_token_id() -> i64 { 1 }
+    fn default_sentence_split_threshold() -> usize { 30 }
+    fn default_decode_headroom() -> usize { 32 }
 
     static CHECKER: OnceLock<Option<GrammarNeuralChecker>> = OnceLock::new();
 
@@ -61,27 +96,30 @@ mod bundled {
         let _ = CHECKER.set(checker);
     }
 
+    /// Total KV cache tensors: 4 layers x 4 (self-attn K,V + cross-attn K,V) = 16.
+    const NUM_KV: usize = 16;
+    /// Number of decoder layers (T5-efficient-tiny has 4).
+    const NUM_LAYERS: usize = 4;
+    /// pkv indices that hold cross-attention KV (K,V pairs at offset 2,3 per layer).
+    const CROSS_ATTN_INDICES: [usize; 8] = [2, 3, 6, 7, 10, 11, 14, 15];
+
     pub struct GrammarNeuralChecker {
         router_session: Mutex<Session>,
         router_tokenizer: Tokenizer,
+        router_threshold: f32,
         t5_encoder: Mutex<Session>,
         t5_decoder: Mutex<Session>,
+        /// Cross-attention K/V projection weights: 8 matrices of [256, 256].
+        /// Order: layer0_K, layer0_V, layer1_K, layer1_V, ... layer3_K, layer3_V.
+        cross_attn_weights: [ndarray::Array2<f32>; NUM_LAYERS * 2],
         t5_tokenizer: Tokenizer,
+        corrector_prefix: String,
+        encoder_hidden_name: String,
         eos_token_id: i64,
         decoder_start_token_id: i64,
+        sentence_split_threshold: usize,
+        decode_headroom: usize,
     }
-
-    /// P(acceptable) below this threshold → route to corrector.
-    const ROUTER_THRESHOLD: f32 = 0.75;
-
-    /// Extra token headroom above encoder input length for the decode loop.
-    /// Output should be close to input length; 32 covers minor expansions.
-    const DECODE_HEADROOM: usize = 32;
-
-    /// Word count above which the corrector splits on sentence boundaries
-    /// before running T5. T5-tiny is unreliable on long multi-sentence input
-    /// and would truncate output when encoder length exceeds ~100 tokens.
-    const SENTENCE_SPLIT_THRESHOLD: usize = 30;
 
     static ORT_INIT: OnceLock<Result<(), String>> = OnceLock::new();
 
@@ -101,6 +139,9 @@ mod bundled {
 
     impl GrammarNeuralChecker {
         fn load() -> Result<Self, String> {
+            let config: Config = serde_json::from_str(CONFIG_BYTES)
+                .map_err(|e| format!("grammar config.json: {e}"))?;
+
             ensure_ort_init()?;
 
             let router_session = Session::builder()
@@ -121,42 +162,55 @@ mod bundled {
                 .commit_from_memory(DEC_MODEL_BYTES)
                 .map_err(|e| format!("t5 decoder: {e}"))?;
 
+            let cross_attn_weights = Self::load_cross_attn_weights()?;
+
             let t5_tokenizer = Tokenizer::from_bytes(T5_TOKENIZER_BYTES)
                 .map_err(|e| format!("t5 tokenizer: {e}"))?;
 
-            log::info!("Neural grammar checker loaded (bundled)");
+            log::info!(
+                "Neural grammar loaded: router threshold={}, corrector prefix={:?}, encoder_hidden={}",
+                config.router.threshold,
+                config.corrector.input_prefix,
+                config.corrector.encoder_hidden_name,
+            );
             Ok(Self {
                 router_session: Mutex::new(router_session),
                 router_tokenizer,
+                router_threshold: config.router.threshold,
                 t5_encoder: Mutex::new(t5_encoder),
                 t5_decoder: Mutex::new(t5_decoder),
+                cross_attn_weights,
                 t5_tokenizer,
-                eos_token_id: 1,           // T5 </s>
-                decoder_start_token_id: 0, // T5 <pad>
+                corrector_prefix: config.corrector.input_prefix,
+                encoder_hidden_name: config.corrector.encoder_hidden_name,
+                eos_token_id: config.corrector.eos_token_id,
+                decoder_start_token_id: config.corrector.decoder_start_token_id,
+                sentence_split_threshold: config.corrector.sentence_split_threshold,
+                decode_headroom: config.corrector.decode_headroom,
             })
         }
 
         /// Route and correct text. Returns (corrected_text, per_sentence_results).
-        /// For long texts, routes and corrects each sentence independently so
-        /// T5 only runs on sentences that actually need it.
+        /// Always splits on sentence boundaries so each sentence is routed and
+        /// scored independently.
         pub fn apply(&self, text: &str) -> (String, Vec<super::SentenceResult>) {
-            if text.split_whitespace().count() > SENTENCE_SPLIT_THRESHOLD {
-                let sentences = Self::split_sentences(text);
-                if sentences.len() > 1 {
-                    let mut parts: Vec<String> = Vec::with_capacity(sentences.len());
-                    let mut results: Vec<super::SentenceResult> = Vec::with_capacity(sentences.len());
-                    for s in &sentences {
-                        let (needs_correction, score) = self.route(s.as_str());
-                        let out = if needs_correction { self.correct(s.as_str()) } else { s.clone() };
-                        parts.push(out.clone());
-                        results.push(super::SentenceResult { text: out, score, corrected: needs_correction });
-                    }
-                    return (parts.join(" "), results);
+            let sentences = Self::split_sentences(text);
+            if sentences.len() > 1 {
+                let mut parts: Vec<String> = Vec::with_capacity(sentences.len());
+                let mut results: Vec<super::SentenceResult> = Vec::with_capacity(sentences.len());
+                for s in &sentences {
+                    let (needs_correction, score) = self.route(s.as_str());
+                    let out = if needs_correction { self.correct(s.as_str()) } else { s.clone() };
+                    let actually_changed = out != *s;
+                    parts.push(out.clone());
+                    results.push(super::SentenceResult { text: out, score, corrected: actually_changed });
                 }
+                return (parts.join(" "), results);
             }
             let (needs_correction, score) = self.route(text);
             let corrected = if needs_correction { self.correct(text) } else { text.to_string() };
-            let results = vec![super::SentenceResult { text: corrected.clone(), score, corrected: needs_correction }];
+            let actually_changed = corrected != text;
+            let results = vec![super::SentenceResult { text: corrected.clone(), score, corrected: actually_changed }];
             (corrected, results)
         }
 
@@ -164,8 +218,8 @@ mod bundled {
         pub fn route(&self, text: &str) -> (bool, Option<f32>) {
             match self.p_acceptable(text) {
                 Ok(p) => {
-                    log::debug!("Grammar router p(acceptable)={p:.3} threshold={ROUTER_THRESHOLD}");
-                    (p < ROUTER_THRESHOLD, Some(p))
+                    log::debug!("Grammar router p(acceptable)={p:.3} threshold={}", self.router_threshold);
+                    (p < self.router_threshold, Some(p))
                 }
                 Err(e) => {
                     log::warn!("Grammar router error: {e}");
@@ -225,13 +279,20 @@ mod bundled {
             Ok(((l1 - m).exp()) / ((l0 - m).exp() + (l1 - m).exp()))
         }
 
-        /// Run T5 correction. Returns the corrected text, or the original on error.
+        /// Run corrector with selective negation guard. Does a word-level
+        /// diff between original and corrected text, then reverts only the
+        /// edits that add or remove negation markers while keeping all other
+        /// corrections. This prevents the corrector from inverting meaning
+        /// (e.g. "isn't working" -> "is working") without throwing away
+        /// unrelated fixes in the same sentence.
         pub fn correct(&self, text: &str) -> String {
             match self.correct_inner(text) {
-                Ok(s) if !s.trim().is_empty() => s,
+                Ok(s) if !s.trim().is_empty() => {
+                    super::guard_negation_edits(text, &s)
+                }
                 Ok(_) => text.to_string(),
                 Err(e) => {
-                    log::warn!("T5 correction failed: {e}");
+                    log::warn!("Corrector failed: {e}");
                     text.to_string()
                 }
             }
@@ -262,9 +323,14 @@ mod bundled {
         }
 
         fn correct_inner(&self, text: &str) -> Result<String, String> {
+            let input_text = if self.corrector_prefix.is_empty() {
+                text.to_string()
+            } else {
+                format!("{}{}", self.corrector_prefix, text)
+            };
             let enc = self
                 .t5_tokenizer
-                .encode(text, true)
+                .encode(input_text.as_str(), true)
                 .map_err(|e| format!("t5 encode: {e}"))?;
 
             let n = enc.get_ids().len();
@@ -289,8 +355,9 @@ mod bundled {
                 .map_err(|e| format!("encoder run: {e}"))?;
 
             let hidden: ArrayD<f32> = enc_out
-                .get("hidden_states")
-                .ok_or("encoder: no 'hidden_states' output")?
+                .get(&self.encoder_hidden_name)
+                .ok_or_else(|| format!("encoder: no '{}' output; got: {:?}",
+                    self.encoder_hidden_name, enc_out.keys().collect::<Vec<_>>()))?
                 .try_extract_array::<f32>()
                 .map_err(|e| format!("encoder hidden: {e}"))?
                 .into_owned();
@@ -306,65 +373,242 @@ mod bundled {
                 .map_err(|e| format!("t5 decode: {e}"))
         }
 
-        /// Greedy decode using only decoder_model.onnx (no KV cache).
-        ///
-        /// Each step re-runs the full decoder over all generated tokens so far.
-        /// O(n²) in token count, but for typical short sentences this stays
-        /// well within the ~50ms budget on ARM64.
+        /// Load 8 cross-attention K/V projection weight matrices from binary.
+        /// Layout: 8 contiguous [256, 256] f32 matrices, ordered by layer then K/V.
+        fn load_cross_attn_weights() -> Result<[ndarray::Array2<f32>; NUM_LAYERS * 2], String> {
+            const DIM: usize = 256;
+            const MAT_BYTES: usize = DIM * DIM * 4;
+            if CROSS_ATTN_WEIGHTS.len() != MAT_BYTES * NUM_LAYERS * 2 {
+                return Err(format!(
+                    "cross_attn_kv_weights.bin: expected {} bytes, got {}",
+                    MAT_BYTES * NUM_LAYERS * 2,
+                    CROSS_ATTN_WEIGHTS.len()
+                ));
+            }
+            let mut weights: Vec<ndarray::Array2<f32>> = Vec::with_capacity(NUM_LAYERS * 2);
+            for i in 0..(NUM_LAYERS * 2) {
+                let offset = i * MAT_BYTES;
+                let floats: Vec<f32> = CROSS_ATTN_WEIGHTS[offset..offset + MAT_BYTES]
+                    .chunks_exact(4)
+                    .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect();
+                let mat = ndarray::Array2::from_shape_vec((DIM, DIM), floats)
+                    .map_err(|e| format!("cross_attn weight {i}: {e}"))?;
+                weights.push(mat);
+            }
+            weights.try_into().map_err(|_| "wrong number of weights".to_string())
+        }
+
+        /// Compute initial cross-attention KV cache from encoder hidden states.
+        /// Returns 16 ArrayD tensors: self-attention slots are empty (shape [1,4,0,64]),
+        /// cross-attention slots are projected from hidden (shape [1,4,enc_seq,64]).
+        fn init_kv_cache(&self, hidden: &ndarray::Array3<f32>) -> Vec<ArrayD<f32>> {
+            let enc_seq = hidden.shape()[1];
+            let hidden_2d = hidden.to_shape((enc_seq, 256)).unwrap();
+            let mut kv: Vec<ArrayD<f32>> = Vec::with_capacity(NUM_KV);
+            let mut weight_idx = 0;
+            for i in 0..NUM_KV {
+                if CROSS_ATTN_INDICES.contains(&i) {
+                    let projected = hidden_2d.dot(&self.cross_attn_weights[weight_idx]);
+                    let shaped = projected
+                        .into_shape_with_order((1, enc_seq, 4, 64))
+                        .unwrap()
+                        .permuted_axes([0, 2, 1, 3])
+                        .as_standard_layout()
+                        .into_owned()
+                        .into_dyn();
+                    kv.push(shaped);
+                    weight_idx += 1;
+                } else {
+                    kv.push(ArrayD::<f32>::zeros(ndarray::IxDyn(&[1, 4, 0, 64])));
+                }
+            }
+            kv
+        }
+
+        /// Greedy decode with KV cache. Pre-computes cross-attention KV from
+        /// encoder hidden states, then runs the decoder_with_past model for
+        /// every token. O(n) total work instead of O(n^2).
         fn decode_greedy(
             &self,
             hidden: &ndarray::Array3<f32>,
             encoder_mask: &Array2<i64>,
         ) -> Result<Vec<u32>, String> {
-            let mut tokens: Vec<i64> = vec![self.decoder_start_token_id];
-            // Allow input length + headroom. Grammar correction output should
-            // be close in length to the input; 2× would allow runaway generation.
-            let limit = hidden.shape()[1] + DECODE_HEADROOM;
+            let limit = hidden.shape()[1] + self.decode_headroom;
+            let mut kv = self.init_kv_cache(hidden);
+            let mut tokens: Vec<i64> = Vec::new();
+            let mut next_tok = self.decoder_start_token_id;
 
             for _ in 0..limit {
-                let seq = tokens.len();
-                let dec_input = Array2::from_shape_vec((1, seq), tokens.clone())
+                let token_arr = Array2::from_shape_vec((1, 1), vec![next_tok])
                     .map_err(|e| e.to_string())?;
 
-                let dec_ref = TensorRef::<i64>::from_array_view(&dec_input)
-                    .map_err(|e| format!("dec ids tensor: {e}"))?;
-                let mask_ref = TensorRef::<i64>::from_array_view(encoder_mask)
-                    .map_err(|e| format!("enc mask tensor: {e}"))?;
-                let hidden_ref = TensorRef::<f32>::from_array_view(hidden)
-                    .map_err(|e| format!("hidden tensor: {e}"))?;
+                let new_kv = {
+                    let token_ref = TensorRef::<i64>::from_array_view(&token_arr)
+                        .map_err(|e| format!("dec ids tensor: {e}"))?;
+                    let mask_ref = TensorRef::<i64>::from_array_view(encoder_mask)
+                        .map_err(|e| format!("enc mask tensor: {e}"))?;
+                    let hidden_ref = TensorRef::<f32>::from_array_view(hidden)
+                        .map_err(|e| format!("hidden tensor: {e}"))?;
 
-                let mut decoder = self.t5_decoder.lock().unwrap();
-                let out = decoder
-                    .run(inputs![
-                        "input_ids"              => dec_ref,
-                        "encoder_attention_mask" => mask_ref,
-                        "encoder_hidden_states"  => hidden_ref,
-                    ])
-                    .map_err(|e| format!("decoder run: {e}"))?;
+                    let kv_refs: Vec<TensorRef<f32>> = kv
+                        .iter()
+                        .map(|a| TensorRef::<f32>::from_array_view(a))
+                        .collect::<Result<_, _>>()
+                        .map_err(|e| format!("kv tensor ref: {e}"))?;
 
-                // logits shape [1, seq, vocab_size] — sample from last position
-                let logits = out
-                    .get("logits")
-                    .ok_or_else(|| format!("decoder: no 'logits' output; got: {:?}", out.keys().collect::<Vec<_>>()))?
-                    .try_extract_array::<f32>()
-                    .map_err(|e| format!("logits: {e}"))?;
-                let next = logits
-                    .slice(s![0, seq - 1, ..])
-                    .iter()
-                    .enumerate()
-                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-                    .map(|(i, _)| i as i64)
-                    .ok_or("empty logits")?;
+                    let mut feed = inputs![
+                        "input_ids"              => token_ref,
+                        "encoder_attention_mask"  => mask_ref,
+                        "encoder_hidden_states"   => hidden_ref,
+                    ];
+                    for (i, r) in kv_refs.into_iter().enumerate() {
+                        feed.push((format!("pkv_{i}").into(), r.into()));
+                    }
 
-                if next == self.eos_token_id {
+                    let mut decoder = self.t5_decoder.lock().unwrap();
+                    let out = decoder.run(feed).map_err(|e| format!("decoder run: {e}"))?;
+
+                    next_tok = Self::argmax_last_token(&out)?;
+
+                    let mut new_kv: Vec<ArrayD<f32>> = Vec::with_capacity(NUM_KV);
+                    for i in 0..NUM_KV {
+                        new_kv.push(
+                            out[i + 1]
+                                .try_extract_array::<f32>()
+                                .map_err(|e| format!("kv[{i}]: {e}"))?
+                                .into_owned(),
+                        );
+                    }
+                    new_kv
+                };
+
+                kv = new_kv;
+
+                if next_tok == self.eos_token_id {
                     break;
                 }
-                tokens.push(next);
+                tokens.push(next_tok);
             }
 
-            // Drop the decoder start token.
-            Ok(tokens[1..].iter().map(|&x| x as u32).collect())
+            Ok(tokens.iter().map(|&x| x as u32).collect())
         }
+
+        /// Extract argmax of the last token position from decoder logits output.
+        fn argmax_last_token(out: &ort::session::SessionOutputs<'_>) -> Result<i64, String> {
+            let logits = out[0]
+                .try_extract_array::<f32>()
+                .map_err(|e| format!("logits: {e}"))?;
+            let last_pos = logits.shape()[1] - 1;
+            logits
+                .slice(s![0, last_pos, ..])
+                .iter()
+                .enumerate()
+                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(i, _)| i as i64)
+                .ok_or_else(|| "empty logits".to_string())
+        }
+    }
+
+}
+
+fn is_negation(word: &str) -> bool {
+    let low = word.to_lowercase();
+    let stripped: String = low.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '\'' || *c == '\u{2019}')
+        .collect();
+    stripped == "not" || stripped == "no" || stripped == "never" || stripped == "nor"
+        || stripped.ends_with("n't") || stripped.ends_with("n\u{2019}t")
+}
+
+/// Word-level diff between original and corrected text. Reverts only edit
+/// regions where the negation count changed (added or removed a negation
+/// marker) while keeping all other corrections.
+fn guard_negation_edits(original: &str, corrected: &str) -> String {
+    let orig_words: Vec<&str> = original.split_whitespace().collect();
+    let corr_words: Vec<&str> = corrected.split_whitespace().collect();
+    if orig_words == corr_words {
+        return corrected.to_string();
+    }
+
+    // LCS word-level diff with case-insensitive matching
+    let n = orig_words.len();
+    let m = corr_words.len();
+    let mut dp = vec![vec![0u16; m + 1]; n + 1];
+    for i in 1..=n {
+        for j in 1..=m {
+            if orig_words[i - 1].eq_ignore_ascii_case(corr_words[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
+            }
+        }
+    }
+
+    // Backtrack to find LCS indices
+    let mut lcs_orig: Vec<usize> = Vec::new();
+    let mut lcs_corr: Vec<usize> = Vec::new();
+    let (mut i, mut j) = (n, m);
+    while i > 0 && j > 0 {
+        if orig_words[i - 1].eq_ignore_ascii_case(corr_words[j - 1]) {
+            lcs_orig.push(i - 1);
+            lcs_corr.push(j - 1);
+            i -= 1;
+            j -= 1;
+        } else if dp[i - 1][j] >= dp[i][j - 1] {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+    lcs_orig.reverse();
+    lcs_corr.reverse();
+
+    // Walk both sequences using LCS anchors. Between anchors are edit
+    // regions where orig and corr diverge.
+    let mut result: Vec<&str> = Vec::new();
+    let mut oi = 0usize;
+    let mut ci = 0usize;
+    let mut reverted = false;
+    for k in 0..lcs_orig.len() {
+        let anchor_o = lcs_orig[k];
+        let anchor_c = lcs_corr[k];
+        let orig_span = &orig_words[oi..anchor_o];
+        let corr_span = &corr_words[ci..anchor_c];
+        let orig_neg: usize = orig_span.iter().filter(|w| is_negation(w)).count();
+        let corr_neg: usize = corr_span.iter().filter(|w| is_negation(w)).count();
+        if orig_neg != corr_neg {
+            result.extend_from_slice(orig_span);
+            reverted = true;
+        } else {
+            result.extend_from_slice(corr_span);
+        }
+        result.push(corr_words[anchor_c]);
+        oi = anchor_o + 1;
+        ci = anchor_c + 1;
+    }
+
+    // Trailing edit region after last anchor
+    let orig_tail = &orig_words[oi..];
+    let corr_tail = &corr_words[ci..];
+    let orig_neg: usize = orig_tail.iter().filter(|w| is_negation(w)).count();
+    let corr_neg: usize = corr_tail.iter().filter(|w| is_negation(w)).count();
+    if orig_neg != corr_neg {
+        result.extend_from_slice(orig_tail);
+        reverted = true;
+    } else {
+        result.extend_from_slice(corr_tail);
+    }
+
+    if reverted {
+        let merged = result.join(" ");
+        log::info!(
+            "Negation guard reverted edits: {:?} -> {:?} (merged: {:?})",
+            original, corrected, merged,
+        );
+        merged
+    } else {
+        corrected.to_string()
     }
 }
 
@@ -388,3 +632,66 @@ pub fn global() -> Option<&'static GrammarNeuralChecker> {
 
 #[cfg(not(grammar_neural_bundled))]
 pub fn init_global() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_negation() {
+        assert!(is_negation("not"));
+        assert!(is_negation("Not"));
+        assert!(is_negation("no"));
+        assert!(is_negation("never"));
+        assert!(is_negation("nor"));
+        assert!(is_negation("isn't"));
+        assert!(is_negation("don't"));
+        assert!(is_negation("isn\u{2019}t")); // curly apostrophe
+        assert!(!is_negation("now"));
+        assert!(!is_negation("note"));
+        assert!(!is_negation("working"));
+    }
+
+    #[test]
+    fn test_identical_text_passes_through() {
+        let text = "The button is working fine.";
+        assert_eq!(guard_negation_edits(text, text), text);
+    }
+
+    #[test]
+    fn test_no_negation_change_keeps_correction() {
+        // Corrector inserted "a" but no negation change
+        let orig = "The create snippet button works.";
+        let corr = "The create a snippet button works.";
+        assert_eq!(guard_negation_edits(orig, corr), corr);
+    }
+
+    #[test]
+    fn test_negation_removal_reverted() {
+        // Corrector removed "isn't" -> "is" (negation count changed)
+        let orig = "The button isn't working.";
+        let corr = "The button is working.";
+        let result = guard_negation_edits(orig, corr);
+        assert!(result.contains("isn't"), "should preserve negation, got: {result}");
+    }
+
+    #[test]
+    fn test_mixed_edits_keeps_non_negation_fixes() {
+        // Corrector inserted "a" AND removed negation
+        let orig = "The create snippet button isn't working";
+        let corr = "The create a snippet button is working";
+        let result = guard_negation_edits(orig, corr);
+        // "a" insertion should be kept, negation removal should be reverted
+        assert!(result.contains("a snippet"), "should keep 'a' insertion, got: {result}");
+        assert!(result.contains("isn't"), "should preserve negation, got: {result}");
+    }
+
+    #[test]
+    fn test_negation_added_reverted() {
+        // Corrector added a negation that wasn't there
+        let orig = "The system works correctly.";
+        let corr = "The system doesn't work correctly.";
+        let result = guard_negation_edits(orig, corr);
+        assert!(!result.contains("doesn't"), "should revert added negation, got: {result}");
+    }
+}

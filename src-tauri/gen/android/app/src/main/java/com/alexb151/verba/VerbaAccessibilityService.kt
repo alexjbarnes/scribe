@@ -18,13 +18,21 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
 import android.content.SharedPreferences
 import android.animation.ValueAnimator
 import android.widget.Toast
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.util.TypedValue
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import org.json.JSONArray
 
 class VerbaAccessibilityService : AccessibilityService() {
 
@@ -43,7 +51,13 @@ class VerbaAccessibilityService : AccessibilityService() {
         @JvmStatic
         private external fun nativeStopAndTranscribe(): String?
         @JvmStatic
+        private external fun nativeStopAndTranscribeRaw(): String?
+        @JvmStatic
         private external fun nativeMatchSnippet(text: String): String?
+        @JvmStatic
+        private external fun nativeListSnippets(): String?
+        @JvmStatic
+        private external fun nativeAddSnippetTrigger(id: String, trigger: String)
         @JvmStatic
         private external fun nativeDestroy()
         @JvmStatic
@@ -67,6 +81,8 @@ class VerbaAccessibilityService : AccessibilityService() {
     private var isOverlayShowing = false
     private var focusedNode: AccessibilityNodeInfo? = null
 
+    private var snippetPickerView: View? = null
+
     // Drag + long-press state
     private var lastTouchX = 0f
     private var lastTouchY = 0f
@@ -81,7 +97,11 @@ class VerbaAccessibilityService : AccessibilityService() {
 
     // Debounced hide to avoid flickering when keyboard opens
     private var pendingHide: Runnable? = null
-    private var lastEditTextSeenMs = 0L
+
+    // After showing on VIEW_FOCUSED, verify keyboard appeared within this
+    // window. If it didn't, the focus was phantom (e.g. Maps transition).
+    private var pendingKeyboardCheck: Runnable? = null
+    private val KEYBOARD_VERIFY_MS = 1500L
 
     // Saved position
     private var savedX = -1
@@ -147,10 +167,20 @@ class VerbaAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED -> "TEXT_CHANGED"
             AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED -> "TEXT_SEL_CHANGED"
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> "WINDOW_STATE"
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> "WINDOWS_CHANGED"
             else -> return
         }
 
         when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOWS_CHANGED -> {
+                // Window list changed (keyboard appeared/disappeared, dialog
+                // opened/closed). If overlay is showing and keyboard gone,
+                // the user likely left the text field.
+                if (isOverlayShowing && !recording && !isKeyboardVisible()) {
+                    logD("overlay[$typeName]: keyboard no longer visible, scheduling hide")
+                    scheduleHide()
+                }
+            }
             AccessibilityEvent.TYPE_VIEW_FOCUSED -> {
                 val source = event.source ?: return
                 val editable = isEditableTextField(source)
@@ -158,10 +188,16 @@ class VerbaAccessibilityService : AccessibilityService() {
                 if (editable) {
                     logI("overlay[$typeName]: SHOW (editable field focused)")
                     cancelPendingHide()
+                    cancelKeyboardVerification()
                     focusedNode?.recycle()
                     focusedNode = source
-                    lastEditTextSeenMs = System.currentTimeMillis()
                     showOverlay()
+                    // If keyboard isn't visible yet, schedule a verification.
+                    // Real focus: keyboard appears within ~300ms, cancels check.
+                    // Phantom focus (Maps transition): keyboard never comes, hide.
+                    if (!isKeyboardVisible()) {
+                        scheduleKeyboardVerification()
+                    }
                 } else {
                     source.recycle()
                     if (!recording) {
@@ -181,7 +217,6 @@ class VerbaAccessibilityService : AccessibilityService() {
                 if (editable && isOverlayShowing) {
                     focusedNode?.recycle()
                     focusedNode = source
-                    lastEditTextSeenMs = System.currentTimeMillis()
                 } else {
                     source.recycle()
                 }
@@ -197,23 +232,22 @@ class VerbaAccessibilityService : AccessibilityService() {
                     return
                 }
 
-                // Keyboard appeared: always show the overlay. The soft keyboard
-                // only appears for text input, so this is a reliable signal.
-                // In WebViews the editable node may not be findable, but
-                // injectText() will locate it when needed.
+                // Keyboard appeared: strong signal for text input.
                 if (cls.contains("SoftInputWindow") || cls.contains("InputMethodService")) {
                     logD("overlay[$typeName]: keyboard appeared")
                     cancelPendingHide()
-                    val editable = findFocusedEditText()
-                    if (editable != null) {
-                        logI("overlay[$typeName]: SHOW (keyboard + focused editable: ${editable.className})")
-                        focusedNode?.recycle()
-                        focusedNode = editable
-                    } else {
-                        logI("overlay[$typeName]: SHOW (keyboard opened, no editable found yet)")
+                    cancelKeyboardVerification()
+                    if (!isOverlayShowing) {
+                        val editable = findFocusedEditText()
+                        if (editable != null) {
+                            logI("overlay[$typeName]: SHOW (keyboard + focused editable: ${editable.className})")
+                            focusedNode?.recycle()
+                            focusedNode = editable
+                        } else {
+                            logI("overlay[$typeName]: SHOW (keyboard opened, no editable found)")
+                        }
+                        showOverlay()
                     }
-                    lastEditTextSeenMs = System.currentTimeMillis()
-                    showOverlay()
                     return
                 }
 
@@ -238,9 +272,9 @@ class VerbaAccessibilityService : AccessibilityService() {
                         if (editable != null) {
                             logI("overlay[$typeName]: SHOW (activity + focused editable: ${editable.className})")
                             cancelPendingHide()
+                            cancelKeyboardVerification()
                             focusedNode?.recycle()
                             focusedNode = editable
-                            lastEditTextSeenMs = System.currentTimeMillis()
                             showOverlay()
                             return
                         }
@@ -248,7 +282,14 @@ class VerbaAccessibilityService : AccessibilityService() {
                     }
                     scheduleHide()
                 } else {
-                    logD("overlay[$typeName]: ignoring non-activity window ($cls)")
+                    // Non-activity window (dialog, popup, Maps navigation
+                    // overlay, etc). If showing, verify keyboard is still up.
+                    if (isOverlayShowing) {
+                        logD("overlay[$typeName]: non-activity window ($cls), scheduling hide")
+                        scheduleHide()
+                    } else {
+                        logD("overlay[$typeName]: ignoring non-activity window ($cls)")
+                    }
                 }
             }
         }
@@ -265,14 +306,10 @@ class VerbaAccessibilityService : AccessibilityService() {
                 logD("overlay[scheduleHide]: recording active, skipping hide")
                 return@Runnable
             }
-            val focused = findFocusedEditText()
-            if (focused != null) {
-                logD("overlay[scheduleHide]: still focused (${focused.className}), keeping overlay")
-                focusedNode?.recycle()
-                focusedNode = focused
-                lastEditTextSeenMs = System.currentTimeMillis()
+            if (isKeyboardVisible()) {
+                logD("overlay[scheduleHide]: keyboard still visible, keeping overlay")
             } else {
-                logI("overlay[scheduleHide]: no focused editable, HIDE")
+                logI("overlay[scheduleHide]: keyboard not visible, HIDE")
                 hideOverlay()
                 focusedNode?.recycle()
                 focusedNode = null
@@ -284,6 +321,38 @@ class VerbaAccessibilityService : AccessibilityService() {
     private fun cancelPendingHide() {
         pendingHide?.let { mainHandler.removeCallbacks(it) }
         pendingHide = null
+    }
+
+    /** True when the soft keyboard window is on screen. */
+    private fun isKeyboardVisible(): Boolean {
+        return try {
+            windows.any { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * After showing on VIEW_FOCUSED, verify keyboard appeared.
+     * Real focus triggers keyboard within ~300ms. Phantom focus (Maps
+     * transition) does not. If keyboard never shows, hide the overlay.
+     */
+    private fun scheduleKeyboardVerification() {
+        cancelKeyboardVerification()
+        pendingKeyboardCheck = Runnable {
+            if (isOverlayShowing && !recording && !isKeyboardVisible()) {
+                logI("overlay[keyboardCheck]: keyboard never appeared, HIDE (phantom focus)")
+                hideOverlay()
+                focusedNode?.recycle()
+                focusedNode = null
+            }
+        }
+        mainHandler.postDelayed(pendingKeyboardCheck!!, KEYBOARD_VERIFY_MS)
+    }
+
+    private fun cancelKeyboardVerification() {
+        pendingKeyboardCheck?.let { mainHandler.removeCallbacks(it) }
+        pendingKeyboardCheck = null
     }
 
     override fun onInterrupt() {
@@ -326,7 +395,7 @@ class VerbaAccessibilityService : AccessibilityService() {
                     outline.setRoundRect(0, 0, view.width, view.height, r.toFloat())
                 }
             }
-            elevation = 6 * density
+            elevation = 0f
             // Start dimmed until init completes
             alpha = if (initialized) 1.0f else 0.5f
         }
@@ -458,6 +527,8 @@ class VerbaAccessibilityService : AccessibilityService() {
     private fun hideOverlay() {
         if (!isOverlayShowing || overlayView == null) return
         logI("hideOverlay")
+        cancelKeyboardVerification()
+        dismissSnippetPicker()
 
         try {
             windowManager?.removeView(overlayView)
@@ -598,14 +669,15 @@ class VerbaAccessibilityService : AccessibilityService() {
         showProcessingRing()
 
         executor.execute {
-            val text = nativeStopAndTranscribe()
-            logI("snippet transcribed: ${text?.take(80) ?: "(null)"}")
+            val text = nativeStopAndTranscribeRaw()
+            logI("snippet transcribed (raw): ${text?.take(80) ?: "(null)"}")
+
             if (text.isNullOrEmpty()) {
                 mainHandler.post {
                     snippetMode = false
                     processing = false
                     hideRing()
-                    toast("No speech detected")
+                    showSnippetPicker(null)
                 }
                 return@execute
             }
@@ -623,9 +695,243 @@ class VerbaAccessibilityService : AccessibilityService() {
                     injectText(body)
                 } else {
                     hideRing()
-                    toast("No snippet matched")
+                    showSnippetPicker(text)
                 }
             }
+        }
+    }
+
+    private fun showSnippetPicker(triggerText: String?) {
+        dismissSnippetPicker()
+
+        val json = try { nativeListSnippets() } catch (e: Exception) {
+            logE("nativeListSnippets failed: $e")
+            null
+        }
+        if (json.isNullOrEmpty()) {
+            toast("No snippets configured")
+            return
+        }
+
+        val snippets = try { JSONArray(json) } catch (e: Exception) {
+            logE("Failed to parse snippets JSON: $e")
+            toast("No snippets configured")
+            return
+        }
+        if (snippets.length() == 0) {
+            toast("No snippets configured")
+            return
+        }
+
+        // Design tokens matching the Tauri frontend
+        val colSurfaceContainerHigh = Color.parseColor("#20201f")
+        val colSurfaceContainerHighest = Color.parseColor("#262626")
+        val colOnSurface = Color.parseColor("#ffffff")
+        val colOnSurfaceVariant = Color.parseColor("#adaaaa")
+        val colOutlineVariant = Color.parseColor("#484847")
+        val colPrimary = Color.parseColor("#9ba8ff")
+
+        val density = resources.displayMetrics.density
+        val dp = { value: Int -> (value * density).toInt() }
+
+        val panelBg = GradientDrawable().apply {
+            setColor(colSurfaceContainerHigh)
+            cornerRadius = 16 * density
+            setStroke(1, Color.argb(51, 0x48, 0x48, 0x47)) // outline-variant/20
+        }
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = panelBg
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            elevation = 8 * density
+        }
+
+        // Title
+        val title = TextView(this).apply {
+            text = if (triggerText != null) "No snippet matched" else "Select snippet"
+            setTextColor(colOnSurface)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            paint.isFakeBoldText = true
+        }
+        container.addView(title)
+
+        // Subtitle with heard text
+        if (triggerText != null) {
+            val subtitle = TextView(this).apply {
+                text = "Heard: \"${triggerText.take(40)}\""
+                setTextColor(colOnSurfaceVariant)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { topMargin = dp(2) }
+            }
+            container.addView(subtitle)
+        }
+
+        // Instruction
+        val instruction = TextView(this).apply {
+            text = "Select a snippet to paste${if (triggerText != null) " and learn this trigger" else ""}:"
+            setTextColor(colOnSurfaceVariant)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(12); bottomMargin = dp(12) }
+        }
+        container.addView(instruction)
+
+        // Scrollable snippet list
+        val scroll = ScrollView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                height = (dp(48) * snippets.length().coerceAtMost(5))
+            }
+        }
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        for (i in 0 until snippets.length()) {
+            val obj = snippets.getJSONObject(i)
+            val snippetId = obj.getString("id")
+            val body = obj.getString("body")
+            val triggers = obj.getJSONArray("triggers")
+            val triggerPreview = if (triggers.length() > 0) triggers.getString(0) else ""
+
+            val itemBg = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = 8 * density
+            }
+
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                background = itemBg
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = dp(2) }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    logI("Picker: selected snippet id=$snippetId")
+                    dismissSnippetPicker()
+                    flashCompleteRing()
+                    injectText(body)
+                    if (triggerText != null) {
+                        executor.execute {
+                            logI("Picker: self-heal adding trigger \"$triggerText\" to $snippetId")
+                            nativeAddSnippetTrigger(snippetId, triggerText)
+                        }
+                    }
+                }
+                setOnTouchListener { v, ev ->
+                    when (ev.action) {
+                        MotionEvent.ACTION_DOWN -> {
+                            (v.background as? GradientDrawable)?.setColor(colSurfaceContainerHighest)
+                            false
+                        }
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                            (v.background as? GradientDrawable)?.setColor(Color.TRANSPARENT)
+                            false
+                        }
+                        else -> false
+                    }
+                }
+            }
+
+            val triggerLabel = TextView(this).apply {
+                text = triggerPreview
+                setTextColor(colPrimary)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                typeface = android.graphics.Typeface.MONOSPACE
+                maxLines = 1
+            }
+            val bodyPreview = TextView(this).apply {
+                text = body.take(60) + if (body.length > 60) "..." else ""
+                setTextColor(colOnSurfaceVariant)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                maxLines = 1
+            }
+            row.addView(triggerLabel)
+            row.addView(bodyPreview)
+            list.addView(row)
+        }
+
+        scroll.addView(list)
+        container.addView(scroll)
+
+        // Dismiss button
+        val dismissBtn = TextView(this).apply {
+            text = "Dismiss"
+            setTextColor(colOnSurfaceVariant)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            paint.isFakeBoldText = true
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(12)
+                gravity = Gravity.END
+            }
+            val btnBg = GradientDrawable().apply {
+                setColor(Color.TRANSPARENT)
+                cornerRadius = 8 * density
+            }
+            background = btnBg
+            setOnClickListener { dismissSnippetPicker() }
+        }
+        container.addView(dismissBtn)
+
+        // Dismiss on outside touch
+        container.setOnTouchListener { _, ev ->
+            if (ev.action == MotionEvent.ACTION_OUTSIDE) {
+                dismissSnippetPicker()
+                true
+            } else false
+        }
+
+        // Add as overlay
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
+        }
+
+        val maxWidth = (resources.displayMetrics.widthPixels * 0.85).toInt()
+        val params = WindowManager.LayoutParams(
+            maxWidth,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+
+        try {
+            windowManager?.addView(container, params)
+            snippetPickerView = container
+            logI("Picker: shown with ${snippets.length()} snippets")
+        } catch (e: Exception) {
+            logE("Picker: failed to show: $e")
+        }
+    }
+
+    private fun dismissSnippetPicker() {
+        snippetPickerView?.let { view ->
+            try {
+                windowManager?.removeView(view)
+            } catch (_: Exception) {}
+            snippetPickerView = null
         }
     }
 
@@ -868,6 +1174,7 @@ class VerbaAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         logI("onDestroy")
+        dismissSnippetPicker()
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         if (isOverlayShowing && overlayView != null) {
             try { windowManager?.removeView(overlayView) } catch (_: Exception) {}

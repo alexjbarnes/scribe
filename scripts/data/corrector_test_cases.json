@@ -1,0 +1,576 @@
+[
+  {
+    "timestamp": "2026-04-02T16:02:54.273980108+00:00",
+    "text": "Perfect, rebuild the APK.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 679,
+    "audio_duration_ms": 3470,
+    "postprocess_ms": 130,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 2
+      },
+      {
+        "name": "ITN",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Vocab",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (skipped)",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Cleanup",
+        "text": "Perfect, rebuild the APK.",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      {
+        "audio_ms": 2532,
+        "transcribe_ms": 678
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-02T15:07:25.940761681+00:00",
+    "text": "Rather than that, what about splitting it into sentences and then sending each sentence through if they were larger?",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 1180,
+    "audio_duration_ms": 7514,
+    "postprocess_ms": 155,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "Rather than that, what about splitting it sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "Rather than that, what about splitting it sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "ITN",
+        "text": "Rather than that, what about splitting it sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Vocab",
+        "text": "Rather than that, what about splitting it sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "Rather than that, what about splitting it into sentences and then sending each sentence through if they were larger?",
+        "changed": true,
+        "duration_ms": 155
+      },
+      {
+        "name": "Cleanup",
+        "text": "Rather than that, what about splitting it into sentences and then sending each sentence through if they were larger?",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      {
+        "audio_ms": 6852,
+        "transcribe_ms": 1179
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-02T15:03:34.066970270+00:00",
+    "text": "Does the neural grammar model that we use? Does it have an upper limit? I ask because when I am sending large amounts of text through it, I see the end bits being chopped off at times. See this as an example.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 341,
+    "audio_duration_ms": 18734,
+    "postprocess_ms": 388,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "Does the neural grammar model that we're using does it have a upper limit? I ask because I when I am sending large amounts of text through it, I'm seeing s the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "Does the neural grammar model that we're using does it have a upper limit? I ask because I when I am sending large amounts of text through it, I'm seeing s the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "ITN",
+        "text": "Does the neural grammar model that we're using does it have a upper limit? I ask because I when I am sending large amounts of text through it, I'm seeing s the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Vocab",
+        "text": "Does the neural grammar model that we're using does it have a upper limit? I ask because I when I am sending large amounts of text through it, I'm seeing s the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "Does the neural grammar model that we use? Does it have an upper limit? I ask because when I am sending large amounts of text through it, I see the end bits being chopped off at times. See this as an example.",
+        "changed": true,
+        "duration_ms": 388
+      },
+      {
+        "name": "Cleanup",
+        "text": "Does the neural grammar model that we use? Does it have an upper limit? I ask because when I am sending large amounts of text through it, I see the end bits being chopped off at times. See this as an example.",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      {
+        "audio_ms": 5528,
+        "transcribe_ms": 865
+      },
+      {
+        "audio_ms": 9860,
+        "transcribe_ms": 1465
+      },
+      {
+        "audio_ms": 1540,
+        "transcribe_ms": 339
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-02T15:01:44.895576579+00:00",
+    "text": "Okay, that's really good research. Can you document it in our docs folder? We already have some documentation around this sort of stuff, so include it with that, please. And on the cola stuff the naming that we just done throughout the app, it shouldn't be named cola, should it? If it should be named a router or a classifier or something like that better. If we're going to swap these models out at times we shouldn't be naming things within the app based on the model name.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 944,
+    "audio_duration_ms": 31361,
+    "postprocess_ms": 1190,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "Okay, that's really good research. Can you document it in our docs folder? We already have some documentation around this sort of stuff, so include it with that, please. And On the cola stuff the naming that we've just done throughout the app, it shouldn't be named Cola, should it? If it it should be named router or classifier or something like that better. If we're gonna swap these models out at times we shouldn't be naming things within the app based on the model name.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "Okay, that's really good research. Can you document it in our docs folder? We already have some documentation around this sort of stuff, so include it with that, please. And On the cola stuff the naming that we've just done throughout the app, it shouldn't be named Cola, should it? If it should be named router or classifier or something like that better. If we're gonna swap these models out at times we shouldn't be naming things within the app based on the model name.",
+        "changed": true,
+        "duration_ms": 2
+      },
+      {
+        "name": "ITN",
+        "text": "Okay, that's really good research. Can you document it in our docs folder? We already have some documentation around this sort of stuff, so include it with that, please. And On the cola stuff the naming that we've just done throughout the app, it shouldn't be named Cola, should it? If it should be named router or classifier or something like that better. If we're gonna swap these models out at times we shouldn't be naming things within the app based on the model name.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Vocab",
+        "text": "Okay, that's really good research. Can you document it in our docs folder? We already have some documentation around this sort of stuff, so include it with that, please. And On the cola stuff the naming that we've just done throughout the app, it shouldn't be named Cola, should it? If it should be named router or classifier or something like that better. If we're going to swap these models out at times we shouldn't be naming things within the app based on the model name.",
+        "changed": true,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "Okay, that's really good research. Can you document it in our docs folder? We already have some documentation around this sort of stuff, so include it with that, please. And on the cola stuff the naming that we just done throughout the app, it shouldn't be named Cola, should it? If it should be named a router or a classifier or something like that better. If we're going to swap these models out at times we shouldn't be naming things within the app based on the model name.",
+        "changed": true,
+        "duration_ms": 1187
+      },
+      {
+        "name": "Cleanup",
+        "text": "Okay, that's really good research. Can you document it in our docs folder? We already have some documentation around this sort of stuff, so include it with that, please. And on the cola stuff the naming that we just done throughout the app, it shouldn't be named cola, should it? If it should be named a router or a classifier or something like that better. If we're going to swap these models out at times we shouldn't be naming things within the app based on the model name.",
+        "changed": true,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      {
+        "audio_ms": 9924,
+        "transcribe_ms": 1566
+      },
+      {
+        "audio_ms": 696,
+        "transcribe_ms": 430
+      },
+      {
+        "audio_ms": 1816,
+        "transcribe_ms": 710
+      },
+      {
+        "audio_ms": 9540,
+        "transcribe_ms": 2153
+      },
+      {
+        "audio_ms": 6020,
+        "transcribe_ms": 943
+      }
+    ]
+  },
+  {
+    "note": "KNOWN DIFF: recorded before always-split-sentences. Per-sentence routing now corrects second sentence differently (inserts comma).",
+    "timestamp": "2026-04-03T09:25:43.278931812+00:00",
+    "text": "The create snippet button isn't working. Whenever I click it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+    "model_id": "parakeet-tdt-0.6b-v2-int8",
+    "duration_ms": 1055,
+    "audio_duration_ms": 10366,
+    "postprocess_ms": 255,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "The create snippet button isn't working. Whenever I click it it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "The create snippet button isn't working. Whenever I click it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": true,
+        "duration_ms": 0
+      },
+      {
+        "name": "ITN",
+        "text": "The create snippet button isn't working. Whenever I click it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Vocab",
+        "text": "The create snippet button isn't working. Whenever I click it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "The create snippet button isn't working. Whenever I click it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": false,
+        "duration_ms": 254,
+        "grammar_score": 0.34319547,
+        "grammar_sentences": [
+          {
+            "text": "The create snippet button isn't working. Whenever I click it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+            "score": 0.34319547,
+            "corrected": false
+          }
+        ]
+      },
+      {
+        "name": "Cleanup",
+        "text": "The create snippet button isn't working. Whenever I click it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      {
+        "audio_ms": 9028,
+        "transcribe_ms": 1284
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-04-02T19:07:49.866307209+00:00",
+    "text": "I looked and flow whisper flow has a feature called snippets. So you would say a short phrase and then that expands it out. I was wondering if we could look at doing something like that. I use things like checking out a new branch from maine, pulling from maine first and then calling it this. Quite a lot. Or various git things and stuff like that. They'd be useful. If I could just create custom.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 772,
+    "audio_duration_ms": 35077,
+    "postprocess_ms": 576,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "I've looked and flow whisper flow has a a feature called snippets. So you would say a short phrase and then that expands it out. I was wondering if we could look at doing something like that. I use thing phrases like check out a new branch from Maine, pull from Maine first and then call it this. Quite a lot. Or various Git things and stuff like that. They'd be useful. If I could just create custom",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "I've looked and flow whisper flow has a feature called snippets. So you would say a short phrase and then that expands it out. I was wondering if we could look at doing something like that. I use thing phrases like check out a new branch from Maine, pull from Maine first and then call it this. Quite a lot. Or various Git things and stuff like that. They'd be useful. If I could just create custom",
+        "changed": true,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "I looked and flow whisper flow has a feature called snippets. So you would say a short phrase and then that expands it out. I was wondering if we could look at doing something like that. I use things like checking out a new branch from Maine, pulling from Maine first and then calling it this. Quite a lot. Or various Git things and stuff like that. They'd be useful. If I could just create custom",
+        "changed": true,
+        "duration_ms": 568,
+        "grammar_score": 0.2580128,
+        "grammar_sentences": [
+          { "text": "I looked and flow whisper flow has a feature called snippets.", "score": 0.2580128, "corrected": true },
+          { "text": "So you would say a short phrase and then that expands it out.", "score": 0.74004656, "corrected": true },
+          { "text": "I was wondering if we could look at doing something like that.", "score": 0.90877247, "corrected": false },
+          { "text": "I use things like checking out a new branch from Maine, pulling from Maine first and then calling it this.", "score": 0.26832953, "corrected": true },
+          { "text": "Quite a lot.", "score": 0.89580697, "corrected": false },
+          { "text": "Or various Git things and stuff like that.", "score": 0.9079269, "corrected": false },
+          { "text": "They'd be useful.", "score": 0.9198376, "corrected": false },
+          { "text": "If I could just create custom", "score": 0.8997189, "corrected": false }
+        ]
+      },
+      {
+        "name": "Cleanup",
+        "text": "I looked and flow whisper flow has a feature called snippets. So you would say a short phrase and then that expands it out. I was wondering if we could look at doing something like that. I use things like checking out a new branch from maine, pulling from maine first and then calling it this. Quite a lot. Or various git things and stuff like that. They'd be useful. If I could just create custom.",
+        "changed": true,
+        "duration_ms": 2
+      }
+    ],
+    "chunk_timings": [
+      { "audio_ms": 9508, "transcribe_ms": 2019 },
+      { "audio_ms": 9444, "transcribe_ms": 1215 },
+      { "audio_ms": 9892, "transcribe_ms": 1321 }
+    ]
+  },
+  {
+    "timestamp": "2026-04-02T19:08:06.059296313+00:00",
+    "text": "Commands for things like a commit and push. I could just say CP instead.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 1479,
+    "audio_duration_ms": 7452,
+    "postprocess_ms": 208,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "commands for things like commit and push. I could just say CP instead.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "commands for things like a commit and push. I could just say CP instead.",
+        "changed": true,
+        "duration_ms": 208,
+        "grammar_score": 0.7101747,
+        "grammar_sentences": [
+          { "text": "commands for things like a commit and push. I could just say CP instead.", "score": 0.7101747, "corrected": true }
+        ]
+      },
+      {
+        "name": "Cleanup",
+        "text": "Commands for things like a commit and push. I could just say CP instead.",
+        "changed": true,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      { "audio_ms": 5988, "transcribe_ms": 1477 }
+    ]
+  },
+  {
+    "timestamp": "2026-04-02T19:31:08.581810814+00:00",
+    "text": "Yes, I think it should be a separate feature. I was thinking that maybe we could have a separate trigger, so hold a different hotkey or hold the android overlay icon as a long press instead of triggering it. And then that would make things a bit simpler.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 1331,
+    "audio_duration_ms": 19581,
+    "postprocess_ms": 457,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "Yes, I think it should be a separate feature. I was thinking that maybe we could have a separate trigger, so hold a different hotkey or Or hold the Android overlay icon as a long press instead to trigger it. And then that would make things a bit simpler.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "Yes, I think it should be a separate feature. I was thinking that maybe we could have a separate trigger, so hold a different hotkey or hold the Android overlay icon as a long press instead to trigger it. And then that would make things a bit simpler.",
+        "changed": true,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "Yes, I think it should be a separate feature. I was thinking that maybe we could have a separate trigger, so hold a different hotkey or hold the Android overlay icon as a long press instead of triggering it. And then that would make things a bit simpler.",
+        "changed": true,
+        "duration_ms": 455,
+        "grammar_score": 0.47968677,
+        "grammar_sentences": [
+          { "text": "Yes, I think it should be a separate feature.", "score": 0.9235763, "corrected": false },
+          { "text": "I was thinking that maybe we could have a separate trigger, so hold a different hotkey or hold the Android overlay icon as a long press instead of triggering it.", "score": 0.47968677, "corrected": true },
+          { "text": "And then that would make things a bit simpler.", "score": 0.92094284, "corrected": false }
+        ]
+      },
+      {
+        "name": "Cleanup",
+        "text": "Yes, I think it should be a separate feature. I was thinking that maybe we could have a separate trigger, so hold a different hotkey or hold the android overlay icon as a long press instead of triggering it. And then that would make things a bit simpler.",
+        "changed": true,
+        "duration_ms": 1
+      }
+    ],
+    "chunk_timings": [
+      { "audio_ms": 9860, "transcribe_ms": 1970 },
+      { "audio_ms": 9220, "transcribe_ms": 1329 }
+    ]
+  },
+  {
+    "timestamp": "2026-04-02T19:31:36.165562833+00:00",
+    "text": "And then you might want to CP, you would unwrap that into the full snippet and then just paste it.",
+    "model_id": "parakeet-tdt-0.6b-v3-int8",
+    "duration_ms": 440,
+    "audio_duration_ms": 12736,
+    "postprocess_ms": 229,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "And then you might for CP, you would unwrap that into the full snippet and then just paste it.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "And then you might want to CP, you would unwrap that into the full snippet and then just paste it.",
+        "changed": true,
+        "duration_ms": 228,
+        "grammar_score": 0.20497052,
+        "grammar_sentences": [
+          { "text": "And then you might want to CP, you would unwrap that into the full snippet and then just paste it.", "score": 0.20497052, "corrected": true }
+        ]
+      },
+      {
+        "name": "Cleanup",
+        "text": "And then you might want to CP, you would unwrap that into the full snippet and then just paste it.",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      { "audio_ms": 8868, "transcribe_ms": 1102 }
+    ]
+  },
+  {
+    "note": "KNOWN DIFF: recorded before negation guard. Expected has 'is working' (negation removed). Guard now correctly preserves 'isn't working'.",
+    "timestamp": "2026-04-03T09:25:43.278931812+00:00",
+    "text": "The create snippet button is working. Whenever I click it just says the engine is still loading. Can you investigate and report back why that is? Don't make any changes.",
+    "model_id": "parakeet-tdt-0.6b-v2-int8",
+    "duration_ms": 1055,
+    "audio_duration_ms": 10366,
+    "postprocess_ms": 255,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "The create snippet button isn't working. Whenever I click it it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Filler removal",
+        "text": "The create snippet button isn't working. Whenever I click it just says engine still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": true,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "The create snippet button is working. Whenever I click it just says the engine is still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": true,
+        "duration_ms": 254,
+        "grammar_score": 0.34319547,
+        "grammar_sentences": [
+          { "text": "The create snippet button is working. Whenever I click it just says the engine is still loading. Can you investigate and report back why that is? Don't make any changes.", "score": 0.34319547, "corrected": true }
+        ]
+      },
+      {
+        "name": "Cleanup",
+        "text": "The create snippet button is working. Whenever I click it just says the engine is still loading. Can you investigate and report back why that is? Don't make any changes.",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      { "audio_ms": 9028, "transcribe_ms": 1284 }
+    ]
+  },
+  {
+    "note": "KNOWN DIFF: recorded before always-split-sentences and before filler/ITN/vocab stages were added. Pipeline stages have changed since capture.",
+    "timestamp": "2026-04-03T09:41:54.731164156+00:00",
+    "text": "And have all the models loaded and everything. We should be able to define what models we want to load, etc. You probably need to write some extra code around it to do all that but we just want to test the pipelines out so the grammar and everything so we could feed individual sentences in or stuff like that or change the models and test things out. There should be a ticket in line for it already.",
+    "model_id": "parakeet-tdt-0.6b-v2-int8",
+    "duration_ms": 644,
+    "audio_duration_ms": 23760,
+    "postprocess_ms": 763,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "and have all the models loaded and everything. We should be able to define what models we want to load, etcetera. Um you probably need to write some extra code around it to do all that but we just want to test the pipelines out so the grammar and everything so we could feed individual sentences in or stuff like that or change the models and test things out. There should be a ticket in Linear for it already.",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "and have all the models loaded and everything. We should be able to define what models we want to load, etc. You probably need to write some extra code around it to do all that but we just want to test the pipelines out so the grammar and everything so we could feed individual sentences in or stuff like that or change the models and test things out. There should be a ticket in line for it already.",
+        "changed": true,
+        "duration_ms": 763,
+        "grammar_score": 0.21074617,
+        "grammar_sentences": [
+          { "text": "and have all the models loaded and everything.", "score": 0.36877233, "corrected": true },
+          { "text": "We should be able to define what models we want to load, etc. You probably need to write some extra code around it to do all that but we just want to test the pipelines out so the grammar and everything so we could feed individual sentences in or stuff like that or change the models and test things out.", "score": 0.4336028, "corrected": true },
+          { "text": "There should be a ticket in line for it already.", "score": 0.21074617, "corrected": true }
+        ]
+      },
+      {
+        "name": "Cleanup",
+        "text": "And have all the models loaded and everything. We should be able to define what models we want to load, etc. You probably need to write some extra code around it to do all that but we just want to test the pipelines out so the grammar and everything so we could feed individual sentences in or stuff like that or change the models and test things out. There should be a ticket in line for it already.",
+        "changed": true,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      { "audio_ms": 9156, "transcribe_ms": 1103 },
+      { "audio_ms": 9924, "transcribe_ms": 1169 },
+      { "audio_ms": 3460, "transcribe_ms": 644 }
+    ]
+  },
+  {
+    "timestamp": "2026-04-03T13:19:00.797931145+00:00",
+    "text": "How do I get marked as a lever?",
+    "model_id": "parakeet-tdt-0.6b-v2-int8",
+    "duration_ms": 275,
+    "audio_duration_ms": 3133,
+    "postprocess_ms": 77,
+    "pipeline_stages": [
+      {
+        "name": "Raw transcription",
+        "text": "How do I get marked as a lever?",
+        "changed": false,
+        "duration_ms": 0
+      },
+      {
+        "name": "Grammar (neural)",
+        "text": "How do I get marked as a lever?",
+        "changed": false,
+        "duration_ms": 77,
+        "grammar_score": 0.9159302,
+        "grammar_sentences": [
+          { "text": "How do I get marked as a lever?", "score": 0.9159302, "corrected": false }
+        ]
+      },
+      {
+        "name": "Cleanup",
+        "text": "How do I get marked as a lever?",
+        "changed": false,
+        "duration_ms": 0
+      }
+    ],
+    "chunk_timings": [
+      { "audio_ms": 2340, "transcribe_ms": 275 }
+    ]
+  }
+]

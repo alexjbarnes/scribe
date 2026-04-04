@@ -7,7 +7,7 @@ mod history;
 mod models;
 #[cfg(desktop)]
 mod paste;
-mod postprocess;
+pub mod postprocess;
 #[cfg(desktop)]
 mod sound;
 mod recorder;
@@ -22,6 +22,11 @@ use tauri::{Emitter, Manager};
 #[cfg(desktop)]
 struct AppState {
     recording: std::sync::atomic::AtomicBool,
+}
+
+#[tauri::command]
+fn is_engine_ready() -> bool {
+    engine::is_initialized()
 }
 
 #[tauri::command]
@@ -241,6 +246,21 @@ fn delete_snippet(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn update_snippet(id: String, triggers: Vec<String>, body: String) -> Result<snippets::Snippet, String> {
+    let triggers: Vec<String> = triggers.into_iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if triggers.is_empty() {
+        return Err("at least one trigger is required".into());
+    }
+    if body.trim().is_empty() {
+        return Err("body cannot be empty".into());
+    }
+    snippets::SnippetManager::global().update(&id, triggers, body)
+}
+
+#[tauri::command]
 fn add_snippet_trigger(id: String, trigger: String) -> Result<(), String> {
     if trigger.trim().is_empty() {
         return Err("trigger cannot be empty".into());
@@ -266,6 +286,22 @@ async fn ui_stop_and_transcribe() -> Result<String, String> {
 
     tokio::task::spawn_blocking(move || {
         pending.finalize_without_history()
+            .ok_or_else(|| "No speech detected".into())
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
+/// Stop a UI-initiated recording and return raw transcription text.
+/// Skips post-processing. Used for snippet triggers where grammar
+/// correction and capitalization are unwanted.
+#[tauri::command]
+async fn ui_stop_and_transcribe_raw() -> Result<String, String> {
+    let pending = engine::with(|eng| eng.stop_recording())
+        .unwrap_or_else(|| Err("Engine not ready".into()))?;
+
+    tokio::task::spawn_blocking(move || {
+        pending.finalize_raw()
             .ok_or_else(|| "No speech detected".into())
     })
     .await
@@ -545,11 +581,11 @@ pub fn run() {
                             std::thread::Builder::new()
                                 .name("snippet-transcribe".into())
                                 .spawn(move || {
-                                    match pending.finalize() {
-                                        Some(result) => {
-                                            log::info!("Snippet shortcut: trigger text: \"{}\"", &result.text);
+                                    match pending.finalize_raw() {
+                                        Some(trigger_text) => {
+                                            log::info!("Snippet shortcut: trigger text: \"{}\"", &trigger_text);
                                             let mgr = snippets::SnippetManager::global();
-                                            if let Some(snippet) = mgr.find_match(&result.text) {
+                                            if let Some(snippet) = mgr.find_match(&trigger_text) {
                                                 log::info!("Snippet matched: {}", &snippet.id);
                                                 use delivery::TextDelivery;
                                                 match deliver.deliver(&snippet.body) {
@@ -563,13 +599,13 @@ pub fn run() {
                                                     serde_json::json!({
                                                         "id": &snippet.id,
                                                         "body": &snippet.body,
-                                                        "trigger_text": &result.text,
+                                                        "trigger_text": &trigger_text,
                                                     }));
                                             } else {
-                                                log::info!("Snippet shortcut: no match for \"{}\"", &result.text);
+                                                log::info!("Snippet shortcut: no match for \"{}\"", &trigger_text);
                                                 let _ = app_for_snippet.emit("snippet-no-match",
                                                     serde_json::json!({
-                                                        "text": &result.text,
+                                                        "text": &trigger_text,
                                                         "snippets": &mgr.list(),
                                                     }));
                                             }
@@ -628,6 +664,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            is_engine_ready,
             list_models,
             list_audio_devices,
             get_config,
@@ -643,10 +680,12 @@ pub fn run() {
             remove_vocab_entry,
             list_snippets,
             save_snippet,
+            update_snippet,
             delete_snippet,
             add_snippet_trigger,
             ui_start_recording,
             ui_stop_and_transcribe,
+            ui_stop_and_transcribe_raw,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

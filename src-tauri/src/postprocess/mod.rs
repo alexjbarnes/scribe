@@ -166,7 +166,19 @@ pub fn postprocess(text: &str) -> PipelineResult {
     let mut grammar_sentences: Vec<grammar_neural::SentenceResult> = vec![];
     let word_count = s.split_whitespace().count();
     if word_count < MIN_GRAMMAR_WORDS {
-        log::debug!("Pipeline stage 4: grammar skipped ({word_count} words < {MIN_GRAMMAR_WORDS})");
+        // Still score via router for data collection, but skip correction.
+        if let Some(neural) = grammar_neural::global() {
+            let (_, score) = neural.route(&s);
+            grammar_score = score;
+            grammar_sentences = vec![grammar_neural::SentenceResult {
+                text: s.clone(),
+                score,
+                corrected: false,
+            }];
+            log::debug!("Pipeline stage 4: grammar skipped ({word_count} words < {MIN_GRAMMAR_WORDS}), score={score:?}");
+        } else {
+            log::debug!("Pipeline stage 4: grammar skipped ({word_count} words < {MIN_GRAMMAR_WORDS})");
+        }
         grammar_label = "Grammar (skipped)";
     } else {
         let grammar_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -573,5 +585,123 @@ mod tests {
             final_cleanup("assert what We want out the other side"),
             "Assert what we want out the other side."
         );
+    }
+
+    // -- Stage isolation: call each stage function independently --
+
+    #[test]
+    fn stage_filler_isolated() {
+        assert_eq!(filler::remove_fillers("um hello uh world"), "hello world");
+    }
+
+    #[test]
+    fn stage_itn_isolated() {
+        assert_eq!(itn::normalize("I have twenty three dollars"), "I have $23");
+    }
+
+    #[test]
+    fn stage_vocab_isolated() {
+        // Built-in informal contractions: "gonna" -> "going to"
+        assert_eq!(vocab::apply("I'm gonna leave"), "I'm going to leave");
+    }
+
+    #[test]
+    fn stage_cleanup_isolated() {
+        assert_eq!(final_cleanup("hello world"), "Hello world.");
+    }
+
+    // -- Pipeline integration: verify stage metadata --
+
+    #[test]
+    fn pipeline_result_has_expected_stage_names() {
+        let result = postprocess("hello world");
+        let names: Vec<&str> = result.stages.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names[0], "Raw transcription");
+        assert_eq!(names[1], "Filler removal");
+        assert_eq!(names[2], "ITN");
+        assert_eq!(names[3], "Vocab");
+        // Stage 4 is grammar (neural, nlprule, or skipped)
+        assert!(names[4].starts_with("Grammar"), "expected Grammar stage, got: {}", names[4]);
+        assert_eq!(names[5], "Cleanup");
+    }
+
+    #[test]
+    fn pipeline_result_has_six_stages() {
+        let result = postprocess("um hello world");
+        assert_eq!(result.stages.len(), 6, "expected 6 stages (raw + 5 processing)");
+    }
+
+    #[test]
+    fn pipeline_changed_flag_correct_for_filler() {
+        let result = postprocess("um I think this works fine");
+        let filler_stage = result.stages.iter().find(|s| s.name == "Filler removal").unwrap();
+        assert!(filler_stage.changed, "filler stage should report changed=true when fillers removed");
+    }
+
+    #[test]
+    fn pipeline_changed_flag_false_when_no_change() {
+        let result = postprocess("I think this works fine");
+        let filler_stage = result.stages.iter().find(|s| s.name == "Filler removal").unwrap();
+        assert!(!filler_stage.changed, "filler stage should report changed=false when no fillers");
+    }
+
+    #[test]
+    fn pipeline_itn_stage_transforms_numbers() {
+        let result = postprocess("I have twenty three items in the list today");
+        let itn_stage = result.stages.iter().find(|s| s.name == "ITN").unwrap();
+        assert!(itn_stage.text.contains("23"), "ITN stage should convert 'twenty three' to '23', got: {}", itn_stage.text);
+        assert!(itn_stage.changed);
+    }
+
+    #[test]
+    fn pipeline_cleanup_stage_capitalizes() {
+        let result = postprocess("hello world");
+        let cleanup_stage = result.stages.iter().find(|s| s.name == "Cleanup").unwrap();
+        assert!(cleanup_stage.text.starts_with('H'), "cleanup should capitalize, got: {}", cleanup_stage.text);
+    }
+
+    #[test]
+    fn pipeline_raw_stage_unchanged() {
+        let result = postprocess("some text here");
+        assert!(!result.stages[0].changed);
+        assert_eq!(result.stages[0].duration_ms, 0);
+    }
+
+    #[test]
+    fn pipeline_grammar_skipped_for_short_text() {
+        let result = postprocess("hello world");
+        let grammar_stage = result.stages.iter().find(|s| s.name.starts_with("Grammar")).unwrap();
+        assert!(grammar_stage.name.contains("skipped"),
+            "2-word text should skip grammar, got stage: {}", grammar_stage.name);
+        assert!(!grammar_stage.changed);
+    }
+
+    #[test]
+    fn pipeline_total_ms_populated() {
+        let result = postprocess("um I think this works fine");
+        // total_ms should be >= 0 (can be 0 on fast machines)
+        // Just verify it's present and the field is set
+        assert!(result.total_ms < 5000, "pipeline should complete in under 5s");
+    }
+
+    #[test]
+    fn pipeline_stages_text_flows_sequentially() {
+        // Verify that each stage's output feeds into the next stage.
+        // The raw stage text should match input, and the final stage
+        // text should match the result.
+        let input = "um I have twenty three items in the shopping list";
+        let result = postprocess(input);
+        assert_eq!(result.stages[0].text, input);
+        assert_eq!(result.stages.last().unwrap().text, result.text);
+    }
+
+    #[test]
+    fn pipeline_result_serialization_roundtrip() {
+        let result = postprocess("hello world");
+        let json = serde_json::to_string(&result).unwrap();
+        let parsed: PipelineResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.text, result.text);
+        assert_eq!(parsed.stages.len(), result.stages.len());
+        assert_eq!(parsed.total_ms, result.total_ms);
     }
 }

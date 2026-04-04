@@ -162,6 +162,36 @@ pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeS
     }
 }
 
+/// Stop recording and return raw transcription text (no post-processing).
+/// Used for snippet trigger matching where grammar correction is unwanted.
+#[no_mangle]
+pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeStopAndTranscribeRaw(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    let null_ptr = std::ptr::null_mut();
+
+    let pending = match engine::with(|eng| eng.stop_recording()) {
+        Some(Ok(p)) => p,
+        Some(Err(e)) => {
+            log::error!("Overlay: failed to stop recording: {e}");
+            return null_ptr;
+        }
+        None => {
+            log::error!("Overlay: engine not initialized");
+            return null_ptr;
+        }
+    };
+
+    match pending.finalize_raw() {
+        Some(text) => match env.new_string(&text) {
+            Ok(s) => s.into_raw(),
+            Err(_) => null_ptr,
+        },
+        None => null_ptr,
+    }
+}
+
 /// Match transcribed text against snippets. Returns the snippet body if a
 /// trigger matches (exact or fuzzy), otherwise returns null.
 #[no_mangle]
@@ -191,6 +221,43 @@ pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeM
             log::info!("Overlay: no snippet match for \"{}\"", text);
             std::ptr::null_mut()
         }
+    }
+}
+
+/// Return all snippets as a JSON array string: [{"id":"...","triggers":["..."],"body":"..."},...]
+#[no_mangle]
+pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeListSnippets(
+    env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    let mgr = crate::snippets::SnippetManager::global();
+    let list = mgr.list();
+    let json = serde_json::to_string(&list).unwrap_or_else(|_| "[]".to_string());
+    match env.new_string(&json) {
+        Ok(s) => s.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Register an additional trigger phrase for a snippet (self-healing).
+#[no_mangle]
+pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeAddSnippetTrigger(
+    mut env: JNIEnv,
+    _class: JClass,
+    id: JString,
+    trigger: JString,
+) {
+    let id: String = match env.get_string(&id) {
+        Ok(s) => s.into(),
+        Err(_) => return,
+    };
+    let trigger: String = match env.get_string(&trigger) {
+        Ok(s) => s.into(),
+        Err(_) => return,
+    };
+    let mgr = crate::snippets::SnippetManager::global();
+    if let Err(e) = mgr.add_trigger(&id, trigger) {
+        log::warn!("Overlay: add_trigger failed: {e}");
     }
 }
 

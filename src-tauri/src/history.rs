@@ -128,3 +128,141 @@ impl History {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_entry() -> HistoryEntry {
+        HistoryEntry {
+            timestamp: "2026-01-01T00:00:00Z".to_string(),
+            text: "Hello world.".to_string(),
+            model_id: "whisper-tiny".to_string(),
+            duration_ms: 150,
+            audio_duration_ms: 2000,
+            postprocess_ms: 5,
+            pipeline_stages: vec![
+                PipelineStage {
+                    name: "Raw transcription".to_string(),
+                    text: "hello world".to_string(),
+                    changed: false,
+                    duration_ms: 0,
+                    grammar_score: None,
+                    grammar_sentences: vec![],
+                },
+                PipelineStage {
+                    name: "Cleanup".to_string(),
+                    text: "Hello world.".to_string(),
+                    changed: true,
+                    duration_ms: 1,
+                    grammar_score: None,
+                    grammar_sentences: vec![],
+                },
+            ],
+            chunk_timings: vec![
+                ChunkTiming { audio_ms: 1500, transcribe_ms: 80 },
+            ],
+        }
+    }
+
+    #[test]
+    fn history_entry_serialization_roundtrip() {
+        let entry = sample_entry();
+        let json = serde_json::to_string(&entry).unwrap();
+        let deserialized: HistoryEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.text, "Hello world.");
+        assert_eq!(deserialized.model_id, "whisper-tiny");
+        assert_eq!(deserialized.duration_ms, 150);
+        assert_eq!(deserialized.audio_duration_ms, 2000);
+        assert_eq!(deserialized.postprocess_ms, 5);
+        assert_eq!(deserialized.pipeline_stages.len(), 2);
+        assert_eq!(deserialized.chunk_timings.len(), 1);
+        assert_eq!(deserialized.chunk_timings[0].audio_ms, 1500);
+    }
+
+    #[test]
+    fn history_entry_default_fields_on_missing_json() {
+        // Older entries might lack new fields. Defaults should fill in.
+        let json = r#"{"timestamp":"2026-01-01T00:00:00Z","text":"hi","model_id":"m","duration_ms":10}"#;
+        let entry: HistoryEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.audio_duration_ms, 0);
+        assert_eq!(entry.postprocess_ms, 0);
+        assert!(entry.pipeline_stages.is_empty());
+        assert!(entry.chunk_timings.is_empty());
+    }
+
+    #[test]
+    fn history_add_and_list() {
+        let history = History { entries: Mutex::new(vec![]) };
+        history.add(
+            "Test text.".into(),
+            "model-1".into(),
+            100, 2000, 5, vec![], vec![],
+        );
+        // list() tries to reload from disk, but we work with in-memory state.
+        // Access entries directly for this unit test.
+        let entries = history.entries.lock().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "Test text.");
+        assert_eq!(entries[0].model_id, "model-1");
+    }
+
+    #[test]
+    fn history_clear() {
+        let history = History { entries: Mutex::new(vec![]) };
+        history.add("one".into(), "m".into(), 1, 1, 0, vec![], vec![]);
+        history.add("two".into(), "m".into(), 1, 1, 0, vec![], vec![]);
+        assert_eq!(history.entries.lock().unwrap().len(), 2);
+        history.clear();
+        assert!(history.entries.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn history_entries_serialize_as_json_array() {
+        let entries = vec![sample_entry()];
+        let json = serde_json::to_string_pretty(&entries).unwrap();
+        let parsed: Vec<HistoryEntry> = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].text, "Hello world.");
+    }
+
+    #[test]
+    fn pipeline_stage_serialization() {
+        let stage = PipelineStage {
+            name: "Grammar (neural)".to_string(),
+            text: "Corrected text.".to_string(),
+            changed: true,
+            duration_ms: 42,
+            grammar_score: Some(0.85),
+            grammar_sentences: vec![],
+        };
+        let json = serde_json::to_string(&stage).unwrap();
+        assert!(json.contains("grammar_score"));
+        let deserialized: PipelineStage = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.grammar_score, Some(0.85));
+    }
+
+    #[test]
+    fn pipeline_stage_skips_none_score_in_json() {
+        let stage = PipelineStage {
+            name: "Cleanup".to_string(),
+            text: "text".to_string(),
+            changed: false,
+            duration_ms: 0,
+            grammar_score: None,
+            grammar_sentences: vec![],
+        };
+        let json = serde_json::to_string(&stage).unwrap();
+        // grammar_score should be omitted when None (skip_serializing_if)
+        assert!(!json.contains("grammar_score"));
+    }
+
+    #[test]
+    fn chunk_timing_serialization() {
+        let ct = ChunkTiming { audio_ms: 1234, transcribe_ms: 56 };
+        let json = serde_json::to_string(&ct).unwrap();
+        let parsed: ChunkTiming = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.audio_ms, 1234);
+        assert_eq!(parsed.transcribe_ms, 56);
+    }
+}
