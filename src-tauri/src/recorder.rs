@@ -419,6 +419,7 @@ fn record_loop(
 ) -> (Vec<f32>, LoopExit) {
     let mut all_samples: Vec<f32> = Vec::new();
     let mut speech_samples: Vec<f32> = Vec::new();
+    let mut total_samples: usize = 0;
     let mut exit_reason = LoopExit::Disconnected;
     let max_segment_samples = (TARGET_SAMPLE_RATE as f32 * MAX_SEGMENT_SECS) as usize;
     let mut samples_since_segment: usize = 0;
@@ -437,11 +438,18 @@ fn record_loop(
                     };
                     match vad {
                         Some(ref mut v) => {
-                            all_samples.extend_from_slice(&resampled);
+                            if segments_sent == 0 {
+                                all_samples.extend_from_slice(&resampled);
+                            }
+                            total_samples += resampled.len();
                             if let Some(segment) = v.accept(&resampled) {
                                 if let Some(ref tx) = segment_tx {
                                     let _ = tx.send(segment);
                                     segments_sent += 1;
+                                    // First segment sent: drop fallback buffer
+                                    if segments_sent == 1 {
+                                        all_samples = Vec::new();
+                                    }
                                 } else {
                                     speech_samples.extend_from_slice(&segment);
                                 }
@@ -449,6 +457,7 @@ fn record_loop(
                         }
                         None => {
                             all_samples.extend_from_slice(&resampled);
+                            total_samples += resampled.len();
                         }
                     }
                 }
@@ -471,7 +480,10 @@ fn record_loop(
                     Some(ref mut r) => r.resample(&mono, false),
                     None => mono,
                 };
-                all_samples.extend_from_slice(&resampled);
+                total_samples += resampled.len();
+                if segments_sent == 0 {
+                    all_samples.extend_from_slice(&resampled);
+                }
             }
             log::warn!("Stream disconnected, exiting record loop");
             exit_reason = LoopExit::Disconnected;
@@ -487,7 +499,10 @@ fn record_loop(
 
                 match vad {
                     Some(ref mut v) => {
-                        all_samples.extend_from_slice(&resampled);
+                        if segments_sent == 0 {
+                            all_samples.extend_from_slice(&resampled);
+                        }
+                        total_samples += resampled.len();
                         samples_since_segment += resampled.len();
 
                         if let Some(segment) = v.accept(&resampled) {
@@ -495,6 +510,9 @@ fn record_loop(
                             if let Some(ref tx) = segment_tx {
                                 let _ = tx.send(segment);
                                 segments_sent += 1;
+                                if segments_sent == 1 {
+                                    all_samples = Vec::new();
+                                }
                             } else {
                                 speech_samples.extend_from_slice(&segment);
                             }
@@ -555,10 +573,11 @@ fn record_loop(
         }
     }
 
+    let total_secs = total_samples as f32 / TARGET_SAMPLE_RATE as f32;
+
     let samples = if segment_tx.is_some() && vad.is_some() {
         // Streaming mode: segments were sent via channel during recording.
         // Only the flushed tail remains in speech_samples.
-        let total = all_samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
         let tail = speech_samples.len() as f32 / TARGET_SAMPLE_RATE as f32;
         if speech_samples.is_empty() && segments_sent == 0 {
             // VAD detected no speech at all, but there might be audio the
@@ -566,31 +585,27 @@ fn record_loop(
             // to raw audio so the transcriber gets a chance.
             let min_fallback = (TARGET_SAMPLE_RATE as f32 * 0.5) as usize;
             if all_samples.len() > min_fallback {
-                log::info!("Streaming: VAD found no speech in {total:.1}s, falling back to raw audio");
+                log::info!("Streaming: VAD found no speech in {total_secs:.1}s, falling back to raw audio");
                 all_samples
             } else {
-                log::info!("Streaming: no speech in {total:.1}s (too short for fallback)");
+                log::info!("Streaming: no speech in {total_secs:.1}s (too short for fallback)");
                 speech_samples
             }
         } else if speech_samples.is_empty() {
-            log::info!("Streaming: all {total:.1}s sent as {segments_sent} segments, no tail");
+            log::info!("Streaming: all {total_secs:.1}s sent as {segments_sent} segments, no tail");
             speech_samples
         } else {
-            log::info!("Streaming: {tail:.1}s tail remaining from {total:.1}s total ({segments_sent} segments sent)");
+            log::info!("Streaming: {tail:.1}s tail remaining from {total_secs:.1}s total ({segments_sent} segments sent)");
             speech_samples
         }
     } else if vad.is_some() && !speech_samples.is_empty() {
         log::info!(
-            "VAD kept {:.1}s of speech from {:.1}s total",
+            "VAD kept {:.1}s of speech from {total_secs:.1}s total",
             speech_samples.len() as f32 / TARGET_SAMPLE_RATE as f32,
-            all_samples.len() as f32 / TARGET_SAMPLE_RATE as f32,
         );
         speech_samples
     } else {
-        log::info!(
-            "Recorded {:.1}s (no VAD or no speech detected)",
-            all_samples.len() as f32 / TARGET_SAMPLE_RATE as f32,
-        );
+        log::info!("Recorded {total_secs:.1}s (no VAD or no speech detected)");
         all_samples
     };
 
