@@ -174,6 +174,7 @@ pub fn postprocess(text: &str) -> PipelineResult {
                 text: s.clone(),
                 score,
                 corrected: false,
+                guarded: false,
             }];
             log::debug!("Pipeline stage 4: grammar skipped ({word_count} words < {MIN_GRAMMAR_WORDS}), score={score:?}");
         } else {

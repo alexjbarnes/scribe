@@ -23,6 +23,10 @@ pub struct SentenceResult {
     pub text: String,
     pub score: Option<f32>,
     pub corrected: bool,
+    /// True if the guard reverted some or all corrector edits (negation
+    /// flip or contraction drop).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub guarded: bool,
 }
 
 #[cfg(grammar_neural_bundled)]
@@ -200,17 +204,17 @@ mod bundled {
                 let mut results: Vec<super::SentenceResult> = Vec::with_capacity(sentences.len());
                 for s in &sentences {
                     let (needs_correction, score) = self.route(s.as_str());
-                    let out = if needs_correction { self.correct(s.as_str()) } else { s.clone() };
+                    let (out, guarded) = if needs_correction { self.correct(s.as_str()) } else { (s.clone(), false) };
                     let actually_changed = out != *s;
                     parts.push(out.clone());
-                    results.push(super::SentenceResult { text: out, score, corrected: actually_changed });
+                    results.push(super::SentenceResult { text: out, score, corrected: actually_changed, guarded });
                 }
                 return (parts.join(" "), results);
             }
             let (needs_correction, score) = self.route(text);
-            let corrected = if needs_correction { self.correct(text) } else { text.to_string() };
+            let (corrected, guarded) = if needs_correction { self.correct(text) } else { (text.to_string(), false) };
             let actually_changed = corrected != text;
-            let results = vec![super::SentenceResult { text: corrected.clone(), score, corrected: actually_changed }];
+            let results = vec![super::SentenceResult { text: corrected.clone(), score, corrected: actually_changed, guarded }];
             (corrected, results)
         }
 
@@ -285,15 +289,16 @@ mod bundled {
         /// corrections. This prevents the corrector from inverting meaning
         /// (e.g. "isn't working" -> "is working") without throwing away
         /// unrelated fixes in the same sentence.
-        pub fn correct(&self, text: &str) -> String {
+        /// Returns (corrected_text, guarded).
+        pub fn correct(&self, text: &str) -> (String, bool) {
             match self.correct_inner(text) {
                 Ok(s) if !s.trim().is_empty() => {
                     super::guard_negation_edits(text, &s)
                 }
-                Ok(_) => text.to_string(),
+                Ok(_) => (text.to_string(), false),
                 Err(e) => {
                     log::warn!("Corrector failed: {e}");
-                    text.to_string()
+                    (text.to_string(), false)
                 }
             }
         }
@@ -521,14 +526,48 @@ fn is_negation(word: &str) -> bool {
         || stripped.ends_with("n't") || stripped.ends_with("n\u{2019}t")
 }
 
-/// Word-level diff between original and corrected text. Reverts only edit
-/// regions where the negation count changed (added or removed a negation
-/// marker) while keeping all other corrections.
-fn guard_negation_edits(original: &str, corrected: &str) -> String {
+/// Returns the word a contraction expands to, if any.
+/// e.g. "we'll" -> "will", "I've" -> "have", "it's" -> "is".
+/// Negation contractions (n't) return None since they're handled by
+/// the negation guard.
+fn contraction_expansion(word: &str) -> Option<&'static str> {
+    let low = word.to_lowercase();
+    let stripped: String = low.chars()
+        .filter(|c| c.is_alphanumeric() || *c == '\'' || *c == '\u{2019}')
+        .collect();
+    if stripped.ends_with("'ve") || stripped.ends_with("\u{2019}ve") { return Some("have"); }
+    if stripped.ends_with("'ll") || stripped.ends_with("\u{2019}ll") { return Some("will"); }
+    if stripped.ends_with("'re") || stripped.ends_with("\u{2019}re") { return Some("are"); }
+    if stripped.ends_with("'m") || stripped.ends_with("\u{2019}m") { return Some("am"); }
+    if stripped.ends_with("'d") || stripped.ends_with("\u{2019}d") { return Some("would"); }
+    if stripped.ends_with("'s") || stripped.ends_with("\u{2019}s") { return Some("is"); }
+    None
+}
+
+/// True if a contraction in the original was dropped without being expanded.
+/// "we'll keep" -> "we keep" is a drop (no "will" in corrected). Reverts.
+/// "it's always" -> "it is always" is an expansion ("is" present). Keeps.
+fn is_contraction_dropped(orig_span: &[&str], corr_span: &[&str]) -> bool {
+    for word in orig_span {
+        if let Some(expansion) = contraction_expansion(word) {
+            if !corr_span.iter().any(|w| w.eq_ignore_ascii_case(expansion)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Word-level diff between original and corrected text. Reverts edit regions
+/// where the corrector changed meaning: negation added/removed, or
+/// contractions dropped without expansion (e.g. "we'll keep" -> "we keep").
+/// Valid expansions like "it's" -> "it is" are kept.
+/// Returns (result_text, was_guarded).
+fn guard_negation_edits(original: &str, corrected: &str) -> (String, bool) {
     let orig_words: Vec<&str> = original.split_whitespace().collect();
     let corr_words: Vec<&str> = corrected.split_whitespace().collect();
     if orig_words == corr_words {
-        return corrected.to_string();
+        return (corrected.to_string(), false);
     }
 
     // LCS word-level diff with case-insensitive matching
@@ -575,9 +614,12 @@ fn guard_negation_edits(original: &str, corrected: &str) -> String {
         let anchor_c = lcs_corr[k];
         let orig_span = &orig_words[oi..anchor_o];
         let corr_span = &corr_words[ci..anchor_c];
-        let orig_neg: usize = orig_span.iter().filter(|w| is_negation(w)).count();
-        let corr_neg: usize = corr_span.iter().filter(|w| is_negation(w)).count();
-        if orig_neg != corr_neg {
+        let neg_changed = {
+            let orig_neg = orig_span.iter().filter(|w| is_negation(w)).count();
+            let corr_neg = corr_span.iter().filter(|w| is_negation(w)).count();
+            orig_neg != corr_neg
+        };
+        if neg_changed || is_contraction_dropped(orig_span, corr_span) {
             result.extend_from_slice(orig_span);
             reverted = true;
         } else {
@@ -591,9 +633,12 @@ fn guard_negation_edits(original: &str, corrected: &str) -> String {
     // Trailing edit region after last anchor
     let orig_tail = &orig_words[oi..];
     let corr_tail = &corr_words[ci..];
-    let orig_neg: usize = orig_tail.iter().filter(|w| is_negation(w)).count();
-    let corr_neg: usize = corr_tail.iter().filter(|w| is_negation(w)).count();
-    if orig_neg != corr_neg {
+    let neg_changed = {
+        let orig_neg = orig_tail.iter().filter(|w| is_negation(w)).count();
+        let corr_neg = corr_tail.iter().filter(|w| is_negation(w)).count();
+        orig_neg != corr_neg
+    };
+    if neg_changed || is_contraction_dropped(orig_tail, corr_tail) {
         result.extend_from_slice(orig_tail);
         reverted = true;
     } else {
@@ -603,12 +648,12 @@ fn guard_negation_edits(original: &str, corrected: &str) -> String {
     if reverted {
         let merged = result.join(" ");
         log::info!(
-            "Negation guard reverted edits: {:?} -> {:?} (merged: {:?})",
+            "Guard reverted edits: {:?} -> {:?} (merged: {:?})",
             original, corrected, merged,
         );
-        merged
+        (merged, true)
     } else {
-        corrected.to_string()
+        (corrected.to_string(), false)
     }
 }
 
@@ -655,43 +700,127 @@ mod tests {
     #[test]
     fn test_identical_text_passes_through() {
         let text = "The button is working fine.";
-        assert_eq!(guard_negation_edits(text, text), text);
+        let (result, guarded) = guard_negation_edits(text, text);
+        assert_eq!(result, text);
+        assert!(!guarded);
     }
 
     #[test]
     fn test_no_negation_change_keeps_correction() {
-        // Corrector inserted "a" but no negation change
         let orig = "The create snippet button works.";
         let corr = "The create a snippet button works.";
-        assert_eq!(guard_negation_edits(orig, corr), corr);
+        let (result, guarded) = guard_negation_edits(orig, corr);
+        assert_eq!(result, corr);
+        assert!(!guarded);
     }
 
     #[test]
     fn test_negation_removal_reverted() {
-        // Corrector removed "isn't" -> "is" (negation count changed)
         let orig = "The button isn't working.";
         let corr = "The button is working.";
-        let result = guard_negation_edits(orig, corr);
+        let (result, guarded) = guard_negation_edits(orig, corr);
         assert!(result.contains("isn't"), "should preserve negation, got: {result}");
+        assert!(guarded);
     }
 
     #[test]
     fn test_mixed_edits_keeps_non_negation_fixes() {
-        // Corrector inserted "a" AND removed negation
         let orig = "The create snippet button isn't working";
         let corr = "The create a snippet button is working";
-        let result = guard_negation_edits(orig, corr);
-        // "a" insertion should be kept, negation removal should be reverted
+        let (result, guarded) = guard_negation_edits(orig, corr);
         assert!(result.contains("a snippet"), "should keep 'a' insertion, got: {result}");
         assert!(result.contains("isn't"), "should preserve negation, got: {result}");
+        assert!(guarded);
     }
 
     #[test]
     fn test_negation_added_reverted() {
-        // Corrector added a negation that wasn't there
         let orig = "The system works correctly.";
         let corr = "The system doesn't work correctly.";
-        let result = guard_negation_edits(orig, corr);
+        let (result, guarded) = guard_negation_edits(orig, corr);
         assert!(!result.contains("doesn't"), "should revert added negation, got: {result}");
+        assert!(guarded);
+    }
+
+    // ── Contraction guard tests ──
+
+    #[test]
+    fn test_contraction_expansion_returns_word() {
+        assert_eq!(contraction_expansion("I've"), Some("have"));
+        assert_eq!(contraction_expansion("we'll"), Some("will"));
+        assert_eq!(contraction_expansion("it's"), Some("is"));
+        assert_eq!(contraction_expansion("we're"), Some("are"));
+        assert_eq!(contraction_expansion("I'm"), Some("am"));
+        assert_eq!(contraction_expansion("he'd"), Some("would"));
+        assert_eq!(contraction_expansion("we\u{2019}ll"), Some("will"));
+        assert_eq!(contraction_expansion("don't"), None);
+        assert_eq!(contraction_expansion("isn't"), None);
+        assert_eq!(contraction_expansion("well"), None);
+        assert_eq!(contraction_expansion("the"), None);
+    }
+
+    #[test]
+    fn test_contraction_valid_expansion_kept() {
+        let orig = "so it's always over the map";
+        let corr = "so it is always over the map";
+        let (result, guarded) = guard_negation_edits(orig, corr);
+        assert_eq!(result, corr, "valid expansion should be kept");
+        assert!(!guarded);
+    }
+
+    #[test]
+    fn test_contraction_were_expansion_kept() {
+        let orig = "see if we're losing tail audio.";
+        let corr = "see if we are losing tail audio.";
+        let (result, guarded) = guard_negation_edits(orig, corr);
+        assert_eq!(result, corr, "valid expansion should be kept");
+        assert!(!guarded);
+    }
+
+    #[test]
+    fn test_contraction_drop_will_reverted() {
+        let orig = "but we'll keep trying to see";
+        let corr = "but we keep trying to see";
+        let (result, guarded) = guard_negation_edits(orig, corr);
+        assert!(result.contains("we'll"), "should preserve contraction, got: {result}");
+        assert!(guarded);
+    }
+
+    #[test]
+    fn test_contraction_drop_have_reverted() {
+        let orig = "I've got an issue";
+        let corr = "I got an issue";
+        let (result, guarded) = guard_negation_edits(orig, corr);
+        assert!(result.contains("I've"), "should preserve contraction, got: {result}");
+        assert!(guarded);
+    }
+
+    #[test]
+    fn test_contraction_drop_am_reverted() {
+        let orig = "I'm going to the store";
+        let corr = "I going to the store";
+        let (result, guarded) = guard_negation_edits(orig, corr);
+        assert!(result.contains("I'm"), "should preserve contraction, got: {result}");
+        assert!(guarded);
+    }
+
+    #[test]
+    fn test_contraction_unrelated_fix_kept() {
+        let orig = "I've got a problems with it";
+        let corr = "I've got a problem with it";
+        let (result, guarded) = guard_negation_edits(orig, corr);
+        assert_eq!(result, corr, "non-contraction fix should be kept");
+        assert!(!guarded);
+    }
+
+    #[test]
+    fn test_mixed_contraction_drop_and_other_fix() {
+        let orig = "I've got a problems";
+        let corr = "I got a problem";
+        let (result, guarded) = guard_negation_edits(orig, corr);
+        assert!(result.contains("I've"), "should preserve contraction, got: {result}");
+        assert!(result.contains("problem"), "should keep grammar fix, got: {result}");
+        assert!(!result.contains("problems"), "should not revert grammar fix, got: {result}");
+        assert!(guarded);
     }
 }
