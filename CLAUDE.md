@@ -5,11 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-just apk            # Build debug Android APK (signed, ~51MB)
+just apk            # Build debug Android APK (signed, ~153MB)
 just apk-release    # Build release APK
 just test           # Run Rust library tests (cargo test --lib in src-tauri/)
 just check          # Fast compile check (no linking)
-just eval           # Run pipeline eval harness (see below)
+just eval           # Run pipeline eval harness against test cases
 just clean          # Clean all build artifacts (cargo + gradle)
 ```
 
@@ -41,11 +41,35 @@ Audio (cpal) -> Resampler (16kHz) -> VAD (Silero) -> Transcriber (sherpa-onnx wo
 
 ### Post-processing pipeline (`src-tauri/src/postprocess/`)
 
-Three stages run sequentially, each ~1-10ms. Pipeline returns `PipelineResult` with intermediate snapshots for stages that changed the text:
-1. Filler removal (rule-based: "um", "uh", duplicates)
-2. Inverse text normalization (numbers, dates, ordinals)
-3. Harper grammar polish (300+ rules via harper-core)
-4. Final cleanup (capitalize, trailing punctuation)
+Five stages run sequentially. Pipeline returns `PipelineResult` with intermediate snapshots for stages that changed the text:
+1. **Filler removal** (`filler.rs`) - rule-based: "um", "uh", word duplicates (~1ms)
+2. **ITN** (`itn.rs`) - inverse text normalization: numbers, dates, ordinals (~5ms)
+3. **Vocab** (`vocab.rs`) - user vocab substitution + built-in informal contractions (gonna->going to) (<1ms)
+4. **Grammar** (`grammar_neural.rs` / nlprule fallback) - dual-path, see below (~4-65ms). Skipped for texts under 5 words
+5. **Cleanup** (inline in `mod.rs`) - capitalize, spacing, trailing punctuation
+
+### Grammar correction (dual-path)
+
+The grammar stage has two paths selected at compile time:
+
+**Neural path** (when model files present in `src-tauri/data/grammar/`):
+- CoLA router (ELECTRA-small, 14MB ONNX INT8) scores sentence acceptability P(acceptable)
+- Below threshold (0.75) routes to T5 corrector (T5-efficient-tiny, 32MB ONNX INT8)
+- Per-sentence splitting and correction with negation guard (prevents meaning inversion)
+- `build.rs` sets `grammar_neural_bundled` cfg flag if all 6 model files exist
+- Models embedded at compile time via `include_bytes!()`
+
+**nlprule fallback** (when neural models absent):
+- LanguageTool rules via nlprule crate (~5-10ms)
+- Compiles out silently when neural path is available
+
+### Snippets (`src-tauri/src/snippets.rs`)
+
+Text expansion system for common phrases:
+- Trigger phrases activate snippet body insertion
+- Fuzzy matching via normalized Levenshtein distance (0.30 threshold)
+- Self-healing: learns misheard triggers over time
+- JSON persistence, dedicated UI tab with creation wizard
 
 ### Key Rust modules (`src-tauri/src/`)
 
@@ -56,6 +80,9 @@ Three stages run sequentially, each ~1-10ms. Pipeline returns `PipelineResult` w
 - `coordinator.rs` - State machine for shortcut debouncing (30ms window). Serializes press/release into Start/Stop/Cancel commands
 - `android_ime.rs` - JNI exports for `VerbaAccessibilityService`. Has its own `OVERLAY_STATE` with separate recorder/transcriber instances. Writes to same history file but via separate `History` instance
 - `history.rs` - JSON persistence. `list()` reloads from disk each call to pick up entries from IME path
+- `snippets.rs` - Snippet management with exact/fuzzy matching and trigger learning
+- `config.rs` - AppConfig persistence (language, threads, device index, haptic feedback, active model)
+- `engine.rs` - Initialization orchestration and readiness checks
 
 ### Platform-specific code
 
@@ -63,14 +90,29 @@ Desktop-only deps (arboard, enigo, global-shortcut) gated with `cfg(not(target_o
 
 ### Frontend (`src/`)
 
-Three files: `index.html`, `main.js`, `styles.css`. No build step, no framework. Communicates with Rust via `window.__TAURI__.core.invoke()` and `window.__TAURI__.event.listen()`. Tauri embeds these at compile time via `generate_context!()`.
+Three files: `index.html`, `main.js`, `styles.css`. No build step, no framework. Uses Tailwind CDK + Material Symbols icons. Communicates with Rust via `window.__TAURI__.core.invoke()` and `window.__TAURI__.event.listen()`. Tauri embeds these at compile time via `generate_context!()`.
+
+Navigation: collapsible sidebar (hamburger menu) with pages for History, Models, Audio, Snippets, Settings, Debug.
+
+### Android overlay visibility (`VerbaAccessibilityService.kt`)
+
+The dictation overlay (floating mic button) uses keyboard visibility as ground truth for show/hide decisions:
+- `isKeyboardVisible()` checks `AccessibilityWindowInfo.TYPE_INPUT_METHOD` via the `windows` API (`flagRetrieveInteractiveWindows` enabled)
+- **Show**: `VIEW_FOCUSED(editable=true)` shows overlay immediately. If keyboard hasn't appeared within 1.5s, treats it as phantom focus and hides (catches Maps search-to-navigation transitions)
+- **Hide**: `scheduleHide()` checks keyboard visibility after 500ms debounce. Keyboard visible = keep. Keyboard gone = hide
+- **Keyboard dismissal**: `TYPE_WINDOWS_CHANGED` detects keyboard disappearing in real time and triggers `scheduleHide`
+- `findFocusedEditText()` is unreliable for WebView apps (Brave, Chrome) and is only used for text context retrieval during injection, not for show/hide decisions
 
 ### Android build details
 
-- `build.rs` compiles `stubs.c` (NNAPI linker stub) and forces `libc++_shared.so` linkage on Android
+- `build.rs` compiles `stubs.c` (NNAPI linker stub), forces `libc++_shared.so` linkage on Android, and sets `grammar_neural_bundled` cfg if model files present
 - sherpa-onnx static libs live at `.android-deps/sherpa-onnx/install/lib/` (built once via `android-build.sh --setup-only`)
 - `src-tauri/gen/android/` is the Gradle project. `RustWebViewClient.kt` handles WebView asset loading via JNI functions generated by Tauri
 - Debug keystore at repo root (`debug.keystore`, gitignored). Must persist across builds for APK upgrade compatibility
+
+### Eval harness (`src-tauri/src/bin/eval_pipeline.rs`)
+
+Runs the postprocess pipeline against JSON test cases in `scripts/data/`. Outputs TSV metrics for comparing pipeline changes. Run with `just eval`.
 
 ### Tauri events
 
@@ -81,3 +123,4 @@ Backend emits: `dictation-state`, `dictation-error`, `transcription-result`, `do
 - sherpa-onnx is the only viable ASR engine for real-time Android (candle too slow, tract can't run Parakeet)
 - ONNX Runtime arm64 crashes during inference for some models (Parakeet TDT 0.6B). fork() isolates this
 - Dual C++ runtime in final binary (c++_static from oboe/cpal + c++_shared from sherpa-onnx). Works but fragile if adding more C++ deps
+- `findFocusedEditText()` (rootInActiveWindow.findFocus) cannot traverse WebView accessibility trees. Do not use it for show/hide logic
