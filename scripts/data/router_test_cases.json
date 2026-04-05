@@ -227,5 +227,71 @@
     "label": 1,
     "category": "clean spoken",
     "score": 0.740
+  },
+  {
+    "text": "Summarize this for me.",
+    "label": 1,
+    "category": "FP / clean imperative scored low",
+    "score": 0.739
+  },
+  {
+    "text": "Build the APK please.",
+    "label": 1,
+    "category": "FP / clean imperative scored very low",
+    "score": 0.504
+  },
+  {
+    "text": "The correction part, the second box is off the screen.",
+    "label": 1,
+    "category": "FP / clean spoken sentence scored very low",
+    "score": 0.243
+  },
+  {
+    "text": "That is the part I wanted fixing.",
+    "label": 1,
+    "category": "clean spoken",
+    "score": 0.918
+  },
+  {
+    "text": "Testing out various inputs to see what happens to see if we're losing tail audio.",
+    "label": 1,
+    "category": "FP / clean spoken scored very low",
+    "score": 0.301
+  },
+  {
+    "text": "Still testing out, not seeing any tail audio loss, which is good, but we'll keep trying to see if we see any differences and things like that.",
+    "label": 1,
+    "category": "FP / clean long spoken sentence, corrector wrongly dropped future tense",
+    "score": 0.722
+  },
+  {
+    "text": "You mentioned that some models on both encoder and decoder. How does that work?",
+    "label": 1,
+    "category": "clean spoken technical question",
+    "score": 0.866
+  },
+  {
+    "text": "Can we look into ways of just doing this with a single model? It seems a bit ludicrous having 2 basically the same models.",
+    "label": 1,
+    "category": "clean spoken technical",
+    "score": 0.915
+  },
+  {
+    "text": "Comments on those tests as to why they're failing.",
+    "label": 1,
+    "category": "clean spoken instruction",
+    "score": 0.916
+  },
+  {
+    "text": "And rebuild the APK.",
+    "label": 1,
+    "category": "FP / clean fragment, continuation sentence",
+    "score": 0.393
+  },
+  {
+    "text": "Farmer in the Dell Farmer in the Dell.",
+    "label": 1,
+    "category": "FP / song title repetition, corrector wrongly added The",
+    "score": 0.266
   }
 ]

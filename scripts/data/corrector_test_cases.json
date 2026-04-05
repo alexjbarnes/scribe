@@ -572,5 +572,85 @@
     "chunk_timings": [
       { "audio_ms": 2340, "transcribe_ms": 275 }
     ]
+  },
+  {
+    "timestamp": "2026-04-04T09:55:23.061460326+00:00",
+    "text": "The farmer in the dell farmer in the dell.",
+    "model_id": "parakeet-tdt-0.6b-v2-int8",
+    "duration_ms": 691,
+    "audio_duration_ms": 8072,
+    "postprocess_ms": 55,
+    "notes": "BAD: corrector added 'The' to a song title. Should not modify proper nouns/titles.",
+    "pipeline_stages": [
+      { "name": "Raw transcription", "text": "Farmer in the Dell Farmer in the Dell.", "changed": false, "duration_ms": 0 },
+      { "name": "Filler removal", "text": "Farmer in the Dell Farmer in the Dell.", "changed": false, "duration_ms": 0 },
+      { "name": "ITN", "text": "Farmer in the Dell Farmer in the Dell.", "changed": false, "duration_ms": 0 },
+      { "name": "Vocab", "text": "Farmer in the Dell Farmer in the Dell.", "changed": false, "duration_ms": 0 },
+      { "name": "Grammar (neural)", "text": "The Farmer in the Dell Farmer in the Dell.", "changed": true, "duration_ms": 55, "grammar_score": 0.26558724,
+        "grammar_sentences": [{ "text": "The Farmer in the Dell Farmer in the Dell.", "score": 0.26558724, "corrected": true }]
+      },
+      { "name": "Cleanup", "text": "The farmer in the dell farmer in the dell.", "changed": true, "duration_ms": 0 }
+    ],
+    "chunk_timings": [{ "audio_ms": 7748, "transcribe_ms": 690 }]
+  },
+  {
+    "timestamp": "2026-04-04T17:04:50.296108879+00:00",
+    "text": "I got an issue where when I go on google maps, the verber overlay icon obviously shows up when I am in the text box type which is fine and expected, but then when I actually start navigation it never hides so it is always over the map which is a bit of pain and not correct.",
+    "model_id": "parakeet-tdt-0.6b-v2-int8",
+    "duration_ms": 459,
+    "audio_duration_ms": 23033,
+    "postprocess_ms": 338,
+    "notes": "BAD: corrector expanded contractions (I've->I, I'm->I am, it's->it is), dropped 'a' from 'bit of a pain'. Contractions are valid informal speech.",
+    "pipeline_stages": [
+      { "name": "Raw transcription", "text": "I've got an issue where when I go on Google Maps the Verber overlay icon obviously shows up when I'm in the text box type which is fine and expected but then when I actually start navigation it never hides so it's always over the map which is a bit of a pain and not correct.", "changed": false, "duration_ms": 0 },
+      { "name": "Filler removal", "text": "I've got an issue where when I go on Google Maps the Verber overlay icon obviously shows up when I'm in the text box type which is fine and expected but then when I actually start navigation it never hides so it's always over the map which is a bit of a pain and not correct.", "changed": false, "duration_ms": 0 },
+      { "name": "ITN", "text": "I've got an issue where when I go on Google Maps the Verber overlay icon obviously shows up when I'm in the text box type which is fine and expected but then when I actually start navigation it never hides so it's always over the map which is a bit of a pain and not correct.", "changed": false, "duration_ms": 0 },
+      { "name": "Vocab", "text": "I've got an issue where when I go on Google Maps the Verber overlay icon obviously shows up when I'm in the text box type which is fine and expected but then when I actually start navigation it never hides so it's always over the map which is a bit of a pain and not correct.", "changed": false, "duration_ms": 0 },
+      { "name": "Grammar (neural)", "text": "I got an issue where when I go on Google Maps, the Verber overlay icon obviously shows up when I am in the text box type which is fine and expected, but then when I actually start navigation it never hides so it is always over the map which is a bit of pain and not correct.", "changed": true, "duration_ms": 337, "grammar_score": 0.70063114,
+        "grammar_sentences": [{ "text": "I got an issue where when I go on Google Maps, the Verber overlay icon obviously shows up when I am in the text box type which is fine and expected, but then when I actually start navigation it never hides so it is always over the map which is a bit of pain and not correct.", "score": 0.70063114, "corrected": true }]
+      },
+      { "name": "Cleanup", "text": "I got an issue where when I go on google maps, the verber overlay icon obviously shows up when I am in the text box type which is fine and expected, but then when I actually start navigation it never hides so it is always over the map which is a bit of pain and not correct.", "changed": true, "duration_ms": 0 }
+    ],
+    "chunk_timings": [{ "audio_ms": 8196, "transcribe_ms": 1274 }, { "audio_ms": 9700, "transcribe_ms": 1352 }]
+  },
+  {
+    "timestamp": "2026-04-04T20:57:53.397528861+00:00",
+    "text": "Testing out various inputs to see what happens to see if we lose tail audio.",
+    "model_id": "parakeet-tdt-0.6b-v2-int8",
+    "duration_ms": 617,
+    "audio_duration_ms": 5367,
+    "postprocess_ms": 106,
+    "notes": "BAD: corrector changed 'we're losing' to 'we lose', altering tense/aspect. Present continuous was correct.",
+    "pipeline_stages": [
+      { "name": "Raw transcription", "text": "testing out various inputs to see what happens to see if we're losing tail audio.", "changed": false, "duration_ms": 0 },
+      { "name": "Filler removal", "text": "testing out various inputs to see what happens to see if we're losing tail audio.", "changed": false, "duration_ms": 0 },
+      { "name": "ITN", "text": "testing out various inputs to see what happens to see if we're losing tail audio.", "changed": false, "duration_ms": 0 },
+      { "name": "Vocab", "text": "testing out various inputs to see what happens to see if we're losing tail audio.", "changed": false, "duration_ms": 0 },
+      { "name": "Grammar (neural)", "text": "Testing out various inputs to see what happens to see if we lose tail audio.", "changed": true, "duration_ms": 106, "grammar_score": 0.30086234,
+        "grammar_sentences": [{ "text": "Testing out various inputs to see what happens to see if we lose tail audio.", "score": 0.30086234, "corrected": true }]
+      },
+      { "name": "Cleanup", "text": "Testing out various inputs to see what happens to see if we lose tail audio.", "changed": false, "duration_ms": 0 }
+    ],
+    "chunk_timings": [{ "audio_ms": 4516, "transcribe_ms": 616 }]
+  },
+  {
+    "timestamp": "2026-04-04T20:58:12.863701039+00:00",
+    "text": "Still testing out, not seeing any tail audio loss, which is good, but we keep trying to see if we see any differences and things like that.",
+    "model_id": "parakeet-tdt-0.6b-v2-int8",
+    "duration_ms": 1256,
+    "audio_duration_ms": 8253,
+    "postprocess_ms": 194,
+    "notes": "BAD: corrector changed 'we'll keep' to 'we keep', dropping future tense. User said 'we will keep' (contraction).",
+    "pipeline_stages": [
+      { "name": "Raw transcription", "text": "Still testing out, not seeing any tail audio loss, which is good, but we'll keep trying to see if we see any differences and things like that.", "changed": false, "duration_ms": 0 },
+      { "name": "Filler removal", "text": "Still testing out, not seeing any tail audio loss, which is good, but we'll keep trying to see if we see any differences and things like that.", "changed": false, "duration_ms": 0 },
+      { "name": "ITN", "text": "Still testing out, not seeing any tail audio loss, which is good, but we'll keep trying to see if we see any differences and things like that.", "changed": false, "duration_ms": 0 },
+      { "name": "Vocab", "text": "Still testing out, not seeing any tail audio loss, which is good, but we'll keep trying to see if we see any differences and things like that.", "changed": false, "duration_ms": 0 },
+      { "name": "Grammar (neural)", "text": "Still testing out, not seeing any tail audio loss, which is good, but we keep trying to see if we see any differences and things like that.", "changed": true, "duration_ms": 194, "grammar_score": 0.7220721,
+        "grammar_sentences": [{ "text": "Still testing out, not seeing any tail audio loss, which is good, but we keep trying to see if we see any differences and things like that.", "score": 0.7220721, "corrected": true }]
+      },
+      { "name": "Cleanup", "text": "Still testing out, not seeing any tail audio loss, which is good, but we keep trying to see if we see any differences and things like that.", "changed": false, "duration_ms": 0 }
+    ],
+    "chunk_timings": [{ "audio_ms": 7876, "transcribe_ms": 1255 }]
   }
 ]
