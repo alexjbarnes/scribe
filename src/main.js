@@ -530,19 +530,18 @@ async function loadConfig() {
   document.getElementById('cfg-haptic').checked = cfg.haptic_feedback;
   // Restore audio device selection
   document.getElementById('audio-device').value = cfg.device_index;
+
+  // Auto-save on change
+  document.getElementById('cfg-haptic').addEventListener('change', saveConfig);
+  document.getElementById('audio-device').addEventListener('change', saveConfig);
 }
 
 async function saveConfig() {
-  // Load current persisted config so we don't clobber fields not shown in UI
-  // (active_model_id, language, threads, output_dir).
   const cfg = await invoke('get_config');
   cfg.device_index = parseInt(document.getElementById('audio-device').value, 10);
   cfg.haptic_feedback = document.getElementById('cfg-haptic').checked;
   try {
     await invoke('save_config', { cfg });
-    const btn = document.getElementById('save-config');
-    btn.textContent = 'Saved!';
-    setTimeout(() => { btn.textContent = 'Save Changes'; }, 1500);
   } catch (err) {
     console.error('Save failed:', err);
     showToast(`Save failed: ${err}`);
@@ -932,6 +931,13 @@ document.getElementById('copy-logs').addEventListener('click', () => {
 // ── Init ──
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Show desktop-only UI elements when not on Android
+  const isDesktop = !navigator.userAgent.includes('Android');
+  if (isDesktop) {
+    document.getElementById('hotkey-row')?.classList.remove('hidden');
+    document.getElementById('nav-audio')?.classList.remove('hidden');
+  }
+
   await loadHistory();
   await loadModels();
   await loadAudioDevices();
@@ -943,5 +949,4 @@ document.addEventListener('DOMContentLoaded', async () => {
     engineReady = true;
   }
 
-  document.getElementById('save-config').addEventListener('click', saveConfig);
 });
