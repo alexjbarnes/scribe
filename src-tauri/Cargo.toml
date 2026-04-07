@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Voice dictation app"
 authors = ["Alex"]
 edition = "2021"
+default-run = "verba-rs"
 
 [lib]
 name = "verba_rs_lib"

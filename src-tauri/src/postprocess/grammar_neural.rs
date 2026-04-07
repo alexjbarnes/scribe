@@ -665,6 +665,9 @@ pub struct GrammarNeuralChecker;
 
 #[cfg(not(grammar_neural_bundled))]
 impl GrammarNeuralChecker {
+    pub fn route(&self, _text: &str) -> (bool, Option<f32>) {
+        (false, None)
+    }
     pub fn apply(&self, text: &str) -> (String, Vec<SentenceResult>) {
         (text.to_string(), vec![])
     }
