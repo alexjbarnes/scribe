@@ -6,12 +6,13 @@ fn main() {
 
     let grammar_dir = std::path::Path::new(&manifest_dir).join("data/grammar");
     let grammar_files = [
-        "cola_model_quantized.onnx",
-        "cola_tokenizer.json",
-        "encoder_model_quantized.onnx",
-        "decoder_with_past_quantized.onnx",
-        "cross_attn_kv_weights.bin",
-        "t5_tokenizer.json",
+        "cola_model_quantized.0.0.1.onnx",
+        "cola_tokenizer.0.0.1.json",
+        "encoder_model_quantized.0.0.1.onnx",
+        "decoder_with_past_quantized.0.0.1.onnx",
+        "cross_attn_kv_weights.0.0.1.bin",
+        "t5_tokenizer.0.0.1.json",
+        "config.0.0.1.json",
     ];
     let grammar_bundled = grammar_files.iter().all(|f| grammar_dir.join(f).exists());
     if grammar_bundled {
@@ -20,7 +21,7 @@ fn main() {
     for f in &grammar_files {
         println!("cargo:rerun-if-changed=data/grammar/{f}");
     }
-    println!("cargo:rerun-if-changed=data/grammar/config.json");
+    println!("cargo:rerun-if-changed=data/grammar/config.0.0.1.json");
 
     // Desktop shared-ORT setup (mirrors Android pattern).
     // When SHERPA_ONNX_LIB_DIR contains a .shared-ort marker, the directory

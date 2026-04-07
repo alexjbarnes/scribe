@@ -40,16 +40,19 @@ mod bundled {
     use tokenizers::Tokenizer;
 
     static ROUTER_MODEL_BYTES: &[u8] =
-        include_bytes!("../../data/grammar/cola_model_quantized.onnx");
-    static ROUTER_TOKENIZER_BYTES: &[u8] = include_bytes!("../../data/grammar/cola_tokenizer.json");
+        include_bytes!("../../data/grammar/cola_model_quantized.0.0.1.onnx");
+    static ROUTER_TOKENIZER_BYTES: &[u8] =
+        include_bytes!("../../data/grammar/cola_tokenizer.0.0.1.json");
     static ENC_MODEL_BYTES: &[u8] =
-        include_bytes!("../../data/grammar/encoder_model_quantized.onnx");
+        include_bytes!("../../data/grammar/encoder_model_quantized.0.0.1.onnx");
     static DEC_MODEL_BYTES: &[u8] =
-        include_bytes!("../../data/grammar/decoder_with_past_quantized.onnx");
+        include_bytes!("../../data/grammar/decoder_with_past_quantized.0.0.1.onnx");
     static CROSS_ATTN_WEIGHTS: &[u8] =
-        include_bytes!("../../data/grammar/cross_attn_kv_weights.bin");
-    static T5_TOKENIZER_BYTES: &[u8] = include_bytes!("../../data/grammar/t5_tokenizer.json");
-    static CONFIG_BYTES: &str = include_str!("../../data/grammar/config.json");
+        include_bytes!("../../data/grammar/cross_attn_kv_weights.0.0.1.bin");
+    static T5_TOKENIZER_BYTES: &[u8] =
+        include_bytes!("../../data/grammar/t5_tokenizer.0.0.1.json");
+    static CONFIG_BYTES: &str =
+        include_str!("../../data/grammar/config.0.0.1.json");
 
     /// Runtime-configurable parameters loaded from config.json.
     #[derive(serde::Deserialize)]
