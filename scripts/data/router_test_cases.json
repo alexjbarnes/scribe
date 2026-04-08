@@ -75,13 +75,13 @@
     "text": "I was thinking that maybe we could have a separate trigger, so hold a different hotkey or hold the Android overlay icon as a long press instead to trigger it.",
     "label": 0,
     "category": "ASR error: instead to trigger instead of instead of triggering",
-    "score": 0.480
+    "score": 0.48
   },
   {
     "text": "commands for things like commit and push. I could just say CP instead.",
     "label": 0,
     "category": "missing article before commit (borderline)",
-    "score": 0.710
+    "score": 0.71
   },
   {
     "text": "and have all the models loaded and everything.",
@@ -178,13 +178,13 @@
     "text": "They'd be useful.",
     "label": 1,
     "category": "clean contraction",
-    "score": 0.920
+    "score": 0.92
   },
   {
     "text": "If I could just create custom",
     "label": 1,
     "category": "clean fragment (trailing sentence)",
-    "score": 0.900
+    "score": 0.9
   },
   {
     "text": "Yes, I think it should be a separate feature.",
@@ -226,7 +226,7 @@
     "text": "So you would say a short phrase and then that expands it out.",
     "label": 1,
     "category": "clean spoken",
-    "score": 0.740
+    "score": 0.74
   },
   {
     "text": "Summarize this for me.",
@@ -293,5 +293,179 @@
     "label": 1,
     "category": "FP / song title repetition, corrector wrongly added The",
     "score": 0.266
+  },
+  {
+    "text": "What about teams? Do we do anything about that? For like eligible teams, I think it is.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.192
+  },
+  {
+    "text": "I'll put a fix in that na in for it now.",
+    "label": 0,
+    "category": "ASR error: na in garbled",
+    "score": 0.201
+  },
+  {
+    "text": "For the update to that is.",
+    "label": 0,
+    "category": "ASR error: incomplete/garbled sentence",
+    "score": 0.205
+  },
+  {
+    "text": "Yes, let's just do root of c.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.207
+  },
+  {
+    "text": "I'm finding that on the chrome, when I try and navigate to the path, I can't get to users alex local. It doesn't show up.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.216
+  },
+  {
+    "text": "Okay great. On the task look back, we're constantly getting this error.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.22
+  },
+  {
+    "text": "Okay great. Can we create a new branch in the core terraform repo? It's in the pair and directory to this repo.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.221
+  },
+  {
+    "text": "I'm not sure but I thought it was all lined. It's okay, I've updated off 0 now.",
+    "label": 0,
+    "category": "ASR error: all lined is garbled",
+    "score": 0.222
+  },
+  {
+    "text": "Okay, perfect. Commit and push.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.224
+  },
+  {
+    "text": "We could just hard code it to.",
+    "label": 0,
+    "category": "sentence fragment: trailing preposition (spoken)",
+    "score": 0.225
+  },
+  {
+    "text": "I've not setting up on any more repos because it just seems like a waste of time until we can sort it out.",
+    "label": 0,
+    "category": "agreement: I have not setting up -> I am not setting up",
+    "score": 0.228
+  },
+  {
+    "text": "Yeah, but I'm thinking it it's more likely to run from the downloads folder, I would have thought.",
+    "label": 0,
+    "category": "ASR stutter: it it is",
+    "score": 0.23
+  },
+  {
+    "text": "I think for memory for the SSM parameter we would have to do that via CI so it would be defined in a e file.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.231
+  },
+  {
+    "text": "I'm not sure that we should be generating a download URL every single time. I would expect there to be some sort of check. So we'd have like a version endpoint and then a download endpoint.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.232
+  },
+  {
+    "text": "Can we check out a new branch from main? Pull main first.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.236
+  },
+  {
+    "text": "On a separate note, I'm struggling to see where we set this anywhere in the code.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.238
+  },
+  {
+    "text": "I thought that was the whole point of go.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.24
+  },
+  {
+    "text": "It's down as 200 milliseconds in the spec.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.241
+  },
+  {
+    "text": "Yeah, good call. I'll do that then. If assigned analysts isn't empty.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.243
+  },
+  {
+    "text": "Okay, if we unpacked it to there, do we need to move the binary there as well?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.249
+  },
+  {
+    "text": "If we are updating the scheduler to hardcode analysts, would we be worth doing the look back or loop back 1 as well?",
+    "label": 0,
+    "category": "ASR error in spoken text",
+    "score": 0.508
+  },
+  {
+    "text": "They would then run. The IPH updater and maybe that moves the files to the correct folder and copies the binary to that folder as well.",
+    "label": 1,
+    "category": "FP / clean spoken scored low-medium",
+    "score": 0.351
+  },
+  {
+    "text": "For the updates we'll want 2 things in S3, an initial installer that's got everything zipped up and then a just the browser extension that's zipped up which the updater will use.",
+    "label": 1,
+    "category": "FP / clean spoken scored low-medium",
+    "score": 0.388
+  },
+  {
+    "text": "Does chrome API give you whether it's ARM or AMD, etc.?",
+    "label": 1,
+    "category": "FP / clean spoken scored low-medium",
+    "score": 0.4
+  },
+  {
+    "text": "Pull from main and then check out from main a new branch. Name it the same as this 1.",
+    "label": 1,
+    "category": "FP / clean spoken scored low-medium",
+    "score": 0.408
+  },
+  {
+    "text": "Yes, under it please.",
+    "label": 1,
+    "category": "FP / clean spoken scored low-medium",
+    "score": 0.411
+  },
+  {
+    "text": "PR for setting assignee type.",
+    "label": 1,
+    "category": "FP / clean spoken scored low-medium",
+    "score": 0.425
+  },
+  {
+    "text": "Okay, great. Did we add unit tests and integration tests for this fix.",
+    "label": 1,
+    "category": "FP / clean spoken scored low-medium",
+    "score": 0.429
+  },
+  {
+    "text": "Main and check out the branch from main.",
+    "label": 1,
+    "category": "FP / clean spoken scored low-medium",
+    "score": 0.432
   }
 ]
