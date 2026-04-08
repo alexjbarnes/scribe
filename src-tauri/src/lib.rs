@@ -64,6 +64,19 @@ fn export_history() -> Result<String, String> {
     history::History::global().export()
 }
 
+#[cfg(desktop)]
+#[tauri::command]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+    arboard::Clipboard::new()
+        .and_then(|mut cb| cb.set_text(text))
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(mobile)]
+#[tauri::command]
+fn copy_to_clipboard(_text: String) -> Result<(), String> {
+    Err("clipboard not available on this platform".into())
+}
 
 #[cfg(target_os = "android")]
 static GLOBAL_JVM: std::sync::OnceLock<jni::JavaVM> = std::sync::OnceLock::new();
@@ -675,6 +688,7 @@ pub fn run() {
             list_history,
             clear_history,
             export_history,
+            copy_to_clipboard,
             get_vocab_entries,
             add_vocab_entry,
             remove_vocab_entry,

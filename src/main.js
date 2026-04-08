@@ -264,7 +264,7 @@ function renderHistory(entries) {
 
     card.querySelector('.copy-entry-btn').addEventListener('click', (e) => {
       const text = formatEntryForCopy(entry);
-      navigator.clipboard.writeText(text).then(() => {
+      invoke('copy_to_clipboard', { text }).then(() => {
         e.target.textContent = 'Copied!';
         setTimeout(() => { e.target.textContent = 'Copy'; }, 1500);
       });
@@ -314,7 +314,7 @@ document.getElementById('export-history').addEventListener('click', async () => 
   const btn = document.getElementById('export-history');
   try {
     const json = await invoke('export_history');
-    await navigator.clipboard.writeText(json);
+    await invoke('copy_to_clipboard', { text: json });
     btn.textContent = 'Copied!';
   } catch (err) {
     console.error('Export failed:', err);
@@ -874,7 +874,7 @@ async function selectSnippetFromPicker(snippet) {
   }
   // Copy snippet body to clipboard so user can paste it
   try {
-    await navigator.clipboard.writeText(snippet.body);
+    await invoke('copy_to_clipboard', { text: snippet.body });
     showToast('Snippet copied to clipboard');
   } catch (_) {
     showToast('Snippet selected: ' + snippet.body.slice(0, 40));
@@ -921,7 +921,7 @@ document.getElementById('clear-logs').addEventListener('click', () => {
 
 document.getElementById('copy-logs').addEventListener('click', () => {
   const text = logOutput.innerText;
-  navigator.clipboard.writeText(text).then(() => {
+  invoke('copy_to_clipboard', { text }).then(() => {
     const btn = document.getElementById('copy-logs');
     btn.textContent = 'Copied!';
     setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
