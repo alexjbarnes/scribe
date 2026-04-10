@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use arboard::Clipboard;
+use arboard::{Clipboard, ImageData};
 
 /// Result of a paste attempt.
 pub enum PasteResult {
@@ -80,10 +80,39 @@ pub fn paste(text: &str, target: Option<&PasteTarget>) -> Result<PasteResult, St
     clipboard_paste(text, target)
 }
 
+/// Saved clipboard content — text or image.
+enum SavedClipboard {
+    Text(String),
+    Image(ImageData<'static>),
+}
+
+/// Snapshot whatever is on the clipboard so we can restore it after pasting.
+fn save_clipboard(clipboard: &mut Clipboard) -> Option<SavedClipboard> {
+    if let Ok(text) = clipboard.get_text() {
+        return Some(SavedClipboard::Text(text));
+    }
+    if let Ok(image) = clipboard.get_image() {
+        return Some(SavedClipboard::Image(image));
+    }
+    None
+}
+
+/// Restore previously saved clipboard content.
+fn restore_clipboard(clipboard: &mut Clipboard, saved: SavedClipboard) {
+    match saved {
+        SavedClipboard::Text(text) => {
+            let _ = clipboard.set_text(text);
+        }
+        SavedClipboard::Image(image) => {
+            let _ = clipboard.set_image(image);
+        }
+    }
+}
+
 /// Clipboard-based paste: set clipboard, activate target app, send Cmd+V.
 fn clipboard_paste(text: &str, target: Option<&PasteTarget>) -> Result<PasteResult, String> {
     let mut clipboard = Clipboard::new().map_err(|e| format!("clipboard: {e}"))?;
-    let saved = clipboard.get_text().ok();
+    let saved = save_clipboard(&mut clipboard);
 
     clipboard
         .set_text(text)
@@ -95,7 +124,7 @@ fn clipboard_paste(text: &str, target: Option<&PasteTarget>) -> Result<PasteResu
         Ok(()) => {
             std::thread::sleep(Duration::from_millis(100));
             if let Some(prev) = saved {
-                let _ = clipboard.set_text(prev);
+                restore_clipboard(&mut clipboard, prev);
             }
             log::info!("Pasted via clipboard: {text}");
             Ok(PasteResult::Pasted)
@@ -464,14 +493,14 @@ mod tests {
         };
 
         let test_text = "verba_test_clipboard_roundtrip";
-        let saved = clipboard.get_text().ok();
+        let saved = save_clipboard(&mut clipboard);
 
         clipboard.set_text(test_text).unwrap();
         let got = clipboard.get_text().unwrap();
         assert_eq!(got, test_text);
 
         if let Some(prev) = saved {
-            let _ = clipboard.set_text(prev);
+            restore_clipboard(&mut clipboard, prev);
         }
     }
 
