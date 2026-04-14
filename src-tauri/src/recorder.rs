@@ -110,22 +110,31 @@ struct StreamHandle {
 pub struct AudioRecorder {
     cmd_tx: mpsc::Sender<Cmd>,
     event_rx: mpsc::Receiver<Event>,
+    vad_path: Option<PathBuf>,
 }
 
 impl AudioRecorder {
     /// Spawn the recorder worker. The VAD model path must point to a Silero
     /// ONNX file. If `vad_model` is None, VAD is disabled and all audio is kept.
     pub fn new(vad_model: Option<&Path>) -> Result<Self, String> {
+        let vad_path: Option<PathBuf> = vad_model.map(|p| p.to_path_buf());
+        let (cmd_tx, event_rx) = Self::spawn_worker(vad_path.as_deref())?;
+        Ok(Self { cmd_tx, event_rx, vad_path })
+    }
+
+    fn spawn_worker(
+        vad_path: Option<&Path>,
+    ) -> Result<(mpsc::Sender<Cmd>, mpsc::Receiver<Event>), String> {
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
 
-        let vad_path: Option<PathBuf> = vad_model.map(|p| p.to_path_buf());
+        let vad_owned: Option<PathBuf> = vad_path.map(|p| p.to_path_buf());
 
         std::thread::Builder::new()
             .name("audio-recorder".into())
             .spawn(move || {
-                let vad = match vad_path {
+                let vad = match vad_owned {
                     Some(ref path) => match Vad::new(path) {
                         Ok(v) => {
                             let _ = ready_tx.send(Ok(()));
@@ -141,7 +150,19 @@ impl AudioRecorder {
                         None
                     }
                 };
-                worker(cmd_rx, event_tx, vad);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    worker(cmd_rx, event_tx, vad);
+                }));
+                if let Err(panic_info) = result {
+                    let msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else {
+                        "unknown panic".to_string()
+                    };
+                    log::error!("Recorder worker thread panicked: {msg}");
+                }
             })
             .map_err(|e| format!("spawn recorder thread: {e}"))?;
 
@@ -149,7 +170,30 @@ impl AudioRecorder {
             .recv()
             .map_err(|e| format!("recorder thread died: {e}"))??;
 
-        Ok(Self { cmd_tx, event_rx })
+        Ok((cmd_tx, event_rx))
+    }
+
+    /// Returns true if the worker thread is still accepting commands.
+    pub fn is_alive(&self) -> bool {
+        // A zero-capacity test isn't possible with mpsc, but we can check
+        // if the receiver side has hung up (which means the thread exited).
+        // Sending on a disconnected channel returns Err, so we just test that.
+        // We can't actually send a dummy command, so check event_rx instead:
+        // if the worker's event_tx was dropped, try_recv returns Disconnected.
+        matches!(
+            self.event_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty) | Ok(_)
+        )
+    }
+
+    /// Respawn the worker thread. Returns Ok if the new thread started,
+    /// or Err if it failed to start (e.g. VAD model missing).
+    pub fn respawn(&mut self) -> Result<(), String> {
+        log::info!("Respawning recorder worker thread");
+        let (cmd_tx, event_rx) = Self::spawn_worker(self.vad_path.as_deref())?;
+        self.cmd_tx = cmd_tx;
+        self.event_rx = event_rx;
+        Ok(())
     }
 
     pub fn start(&self) -> Result<(), String> {

@@ -293,7 +293,14 @@ impl Engine {
     }
 
     /// Start recording with background VAD segment transcription.
-    pub fn start_streaming(&self) -> Result<(), String> {
+    /// If the recorder thread has died, attempts to respawn it once before failing.
+    pub fn start_streaming(&mut self) -> Result<(), String> {
+        if !self.recorder.is_alive() {
+            log::warn!("Engine: recorder thread dead, attempting respawn");
+            self.recorder.respawn()?;
+            log::info!("Engine: recorder thread respawned");
+        }
+
         let seg_rx = self.recorder.start_streaming()?;
         log::info!("Engine: recording started (streaming segments)");
         *self.recording_start.lock().unwrap() = Some(std::time::Instant::now());

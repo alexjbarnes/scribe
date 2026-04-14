@@ -286,7 +286,7 @@ fn add_snippet_trigger(id: String, trigger: String) -> Result<(), String> {
 /// to get the text back.
 #[tauri::command]
 fn ui_start_recording() -> Result<(), String> {
-    engine::with(|eng| eng.start_streaming())
+    engine::with_mut(|eng| eng.start_streaming())
         .unwrap_or_else(|| Err("Engine not ready".into()))
 }
 
@@ -458,7 +458,7 @@ pub fn run() {
                                 return;
                             }
                             *captured_target.lock().unwrap() = paste::capture_frontmost_app();
-                            let started = engine::with(|eng| eng.start_streaming());
+                            let started = engine::with_mut(|eng| eng.start_streaming());
                             match started {
                                 Some(Ok(())) => {
                                     state.recording.store(true, Ordering::SeqCst);
@@ -551,7 +551,7 @@ pub fn run() {
                                 return;
                             }
                             *captured_target_s.lock().unwrap() = paste::capture_frontmost_app();
-                            let started = engine::with(|eng| eng.start_streaming());
+                            let started = engine::with_mut(|eng| eng.start_streaming());
                             match started {
                                 Some(Ok(())) => {
                                     state.recording.store(true, Ordering::SeqCst);

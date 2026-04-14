@@ -118,7 +118,7 @@ pub extern "system" fn Java_com_alexb151_verba_VerbaAccessibilityService_nativeS
     _env: JNIEnv,
     _class: JClass,
 ) -> jboolean {
-    match engine::with(|eng| eng.start_streaming()) {
+    match engine::with_mut(|eng| eng.start_streaming()) {
         Some(Ok(())) => JNI_TRUE,
         Some(Err(e)) => {
             log::error!("Overlay: failed to start recording: {e}");
