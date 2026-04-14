@@ -27,6 +27,7 @@ import android.widget.TextView
 import android.content.SharedPreferences
 import android.animation.ValueAnimator
 import android.widget.Toast
+import android.app.KeyguardManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
@@ -110,7 +111,11 @@ class VerbaAccessibilityService : AccessibilityService() {
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                Intent.ACTION_SCREEN_OFF -> hideOverlay()
+                Intent.ACTION_SCREEN_OFF -> {
+                    hideOverlay()
+                    focusedNode?.recycle()
+                    focusedNode = null
+                }
                 Intent.ACTION_USER_PRESENT -> if (focusedNode != null) showOverlay()
             }
         }
@@ -484,6 +489,12 @@ class VerbaAccessibilityService : AccessibilityService() {
     private fun showOverlay() {
         if (isOverlayShowing || overlayView == null) {
             logD("showOverlay: skip (showing=$isOverlayShowing, view=${overlayView != null})")
+            return
+        }
+
+        val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (km?.isKeyguardLocked == true) {
+            logD("showOverlay: skip (keyguard locked)")
             return
         }
 
