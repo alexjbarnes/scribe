@@ -87,12 +87,26 @@ enum SavedClipboard {
 }
 
 /// Snapshot whatever is on the clipboard so we can restore it after pasting.
+///
+/// Check for images first: macOS screenshots on the clipboard often have
+/// a text representation too (filename or empty string), so checking text
+/// first would discard the image.
 fn save_clipboard(clipboard: &mut Clipboard) -> Option<SavedClipboard> {
-    if let Ok(text) = clipboard.get_text() {
-        return Some(SavedClipboard::Text(text));
-    }
     if let Ok(image) = clipboard.get_image() {
-        return Some(SavedClipboard::Image(image));
+        if image.width > 0 && image.height > 0 {
+            log::info!(
+                "Saved clipboard image: {}x{} ({} bytes)",
+                image.width,
+                image.height,
+                image.bytes.len()
+            );
+            return Some(SavedClipboard::Image(image));
+        }
+    }
+    if let Ok(text) = clipboard.get_text() {
+        if !text.is_empty() {
+            return Some(SavedClipboard::Text(text));
+        }
     }
     None
 }
@@ -122,7 +136,9 @@ fn clipboard_paste(text: &str, target: Option<&PasteTarget>) -> Result<PasteResu
 
     match simulate_paste_keystroke(target) {
         Ok(()) => {
-            std::thread::sleep(Duration::from_millis(100));
+            // Give the target app time to read the clipboard before restoring.
+            // osascript activate + keystroke needs more than 100ms on some apps.
+            std::thread::sleep(Duration::from_millis(250));
             if let Some(prev) = saved {
                 restore_clipboard(&mut clipboard, prev);
             }
