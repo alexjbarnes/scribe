@@ -15,15 +15,21 @@ Outputs (all written to --output-dir, with optional --version suffix):
   tokenizer_config.json              - Max length, padding side, special token IDs
 
 Usage:
+    pip install -r scripts/requirements-grammar.txt
     python scripts/download_t5_grammar_onnx.py --output-dir src-tauri/data/grammar/
     python scripts/download_t5_grammar_onnx.py --output-dir src-tauri/data/grammar/ --version 0.0.1
+    python scripts/download_t5_grammar_onnx.py --output-dir src-tauri/data/grammar/ --version 0.0.1 --verify
 
-Requires:
-    pip install huggingface_hub onnx onnxruntime numpy
+Reproducibility:
+    Quantization output depends on exact library versions. Use the pinned versions
+    in scripts/requirements-grammar.txt. Run with --verify to check output MD5s
+    against known-good values.
 """
 import argparse
+import hashlib
 import re
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
@@ -41,6 +47,54 @@ EXPECTED_DECODER_INPUTS = {
     "encoder_hidden_states",
     *(f"pkv_{i}" for i in range(16)),
 }
+
+# Known-good MD5 checksums for v0.0.1 output files.
+# Generated with onnxruntime==1.24.4, onnx==1.21.0, numpy==2.4.3.
+KNOWN_CHECKSUMS = {
+    "0.0.1": {
+        "decoder_with_past_quantized.onnx": "88e7f9f00085d51c0bfc777e5dc60fd9",
+        "encoder_model_quantized.onnx": "87193644b7f16105f2a28e8347cf522e",
+        "cross_attn_kv_weights.bin": "2d25e8583031f543ebcc639856383bf3",
+        "t5_tokenizer.json": "4bab65b652e076c1a6fc8ed1bdfae2c2",
+        "special_tokens_map.json": "0d21dc8bbd9451f28b3609ed3dcb2375",
+        "tokenizer_config.json": "d171383bb03ce07e046c17dc737db124",
+    },
+}
+
+
+def check_dependency_versions():
+    """Warn if installed versions differ from the pinned requirements."""
+    import importlib.metadata
+
+    expected = {
+        "onnxruntime": "1.24.4",
+        "onnx": "1.21.0",
+        "numpy": "2.4.3",
+    }
+    mismatches = []
+    for pkg, want in expected.items():
+        try:
+            got = importlib.metadata.version(pkg)
+        except importlib.metadata.PackageNotFoundError:
+            mismatches.append(f"  {pkg}: NOT INSTALLED (need {want})")
+            continue
+        if got != want:
+            mismatches.append(f"  {pkg}: {got} (need {want})")
+
+    if mismatches:
+        print("ERROR: dependency version mismatch. Quantization will not be reproducible.")
+        for m in mismatches:
+            print(m)
+        print("Install pinned versions: pip install -r scripts/requirements-grammar.txt")
+        sys.exit(1)
+
+
+def md5_file(path: Path) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def download_onnx_files(model_id: str, tmp_dir: Path):
@@ -292,6 +346,33 @@ def verify_decoder(model_path: Path):
     return True
 
 
+def verify_checksums(output_dir: Path, version: str, versioned_fn) -> bool:
+    """Verify output files match known-good checksums."""
+    checksums = KNOWN_CHECKSUMS.get(version)
+    if not checksums:
+        print(f"\nNo known checksums for version {version}, skipping verification")
+        return True
+
+    print(f"\nVerifying checksums (version {version}):")
+    all_ok = True
+    for base_name, expected_md5 in sorted(checksums.items()):
+        out_name = versioned_fn(base_name)
+        path = output_dir / out_name
+        if not path.exists():
+            print(f"  MISSING: {out_name}")
+            all_ok = False
+            continue
+        actual_md5 = md5_file(path)
+        match = actual_md5 == expected_md5
+        status = "OK" if match else "MISMATCH"
+        print(f"  {status}: {out_name} ({actual_md5})")
+        if not match:
+            print(f"         expected {expected_md5}")
+            all_ok = False
+
+    return all_ok
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Download and prepare T5 grammar correction ONNX model files"
@@ -306,16 +387,36 @@ def main():
         default=None,
         help="Version suffix for output files (e.g. 0.0.1 -> encoder_model_quantized.0.0.1.onnx)",
     )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="After building, verify output MD5s match known-good checksums",
+    )
+    parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="Only verify existing files, don't download or build",
+    )
     args = parser.parse_args()
 
     out = Path(args.output_dir)
-    out.mkdir(parents=True, exist_ok=True)
 
     def versioned(name: str) -> str:
         if args.version is None:
             return name
         stem, ext = name.rsplit(".", 1)
         return f"{stem}.{args.version}.{ext}"
+
+    if args.verify_only:
+        if not args.version:
+            print("--verify-only requires --version")
+            sys.exit(1)
+        ok = verify_checksums(out, args.version, versioned)
+        sys.exit(0 if ok else 1)
+
+    check_dependency_versions()
+
+    out.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="grammar-export-") as tmp:
         tmp_dir = Path(tmp)
@@ -362,7 +463,8 @@ def main():
         ]
         for src, dst_name in file_map:
             shutil.copy(src, out / dst_name)
-            print(f"  -> {dst_name}")
+            mb = src.stat().st_size / (1024 * 1024)
+            print(f"  -> {dst_name} ({mb:.1f}MB, md5:{md5_file(src)})")
 
         # Tokenizer
         tok_src = tmp_dir / "tokenizer.json"
@@ -373,8 +475,9 @@ def main():
         for fname in ["tokenizer_config.json", "special_tokens_map.json"]:
             src = tmp_dir / fname
             if src.exists():
-                shutil.copy(src, out / fname)
-                print(f"  -> {fname}")
+                dst = versioned(fname) if args.version else fname
+                shutil.copy(src, out / dst)
+                print(f"  -> {dst}")
 
     # Summary
     print(f"\nDone. Files in {out}:")
@@ -383,6 +486,15 @@ def main():
             kb = f.stat().st_size / 1024
             label = f"{kb/1024:.1f}MB" if kb > 1024 else f"{kb:.0f}KB"
             print(f"  {f.name} ({label})")
+
+    # Verify if requested or if we have checksums for this version
+    if args.verify and args.version:
+        ok = verify_checksums(out, args.version, versioned)
+        if not ok:
+            print("\nWARNING: checksum mismatch. Output differs from known-good build.")
+            print("This usually means a dependency version changed.")
+            print("Install pinned versions: pip install -r scripts/requirements-grammar.txt")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

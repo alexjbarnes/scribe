@@ -467,5 +467,797 @@
     "label": 1,
     "category": "FP / clean spoken scored low-medium",
     "score": 0.432
+  },
+  {
+    "text": "Can you pull main then create a new branch from main?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.266
+  },
+  {
+    "text": "Fetch task fix.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.228
+  },
+  {
+    "text": "So when we create the search tasks, or any tasks actually, we should be using the assigned analyst field from the campaign in the portal database, it's just been named wrong effectively.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.242
+  },
+  {
+    "text": "PR to give task look back port database permissions.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.212
+  },
+  {
+    "text": "Transient errors no.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.217
+  },
+  {
+    "text": "So it's a of time.",
+    "label": 0,
+    "category": "ASR error: missing word",
+    "score": 0.195
+  },
+  {
+    "text": "The welcome section 1, I'm not sure that is correct.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.269
+  },
+  {
+    "text": "PR to f fix.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.23
+  },
+  {
+    "text": "fetch task title and instructions",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.326
+  },
+  {
+    "text": "PR for analyst portal browser extension downloads and updated instructions.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.268
+  },
+  {
+    "text": "Great, commit and push.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.21
+  },
+  {
+    "text": "Okay brilliant, I'll test that tomorrow.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.219
+  },
+  {
+    "text": "Can we check that everything from the original ADR for the browser extension we've got?",
+    "label": 0,
+    "category": "garbled clause ending",
+    "score": 0.224
+  },
+  {
+    "text": "So we're getting there with the task look back, but it's still not quite right.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.246
+  },
+  {
+    "text": "We are already setting required but we need to get tooltip and attribute type and tile.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.222
+  },
+  {
+    "text": "from the campaign.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.234
+  },
+  {
+    "text": "Pull main, then check out a new branch from main and then commit and push the changes please.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.275
+  },
+  {
+    "text": "Come in push.",
+    "label": 0,
+    "category": "ASR error: commit -> come in",
+    "score": 0.219
+  },
+  {
+    "text": "PR4 task attributes affix.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.214
+  },
+  {
+    "text": "Have we got a build with the dot command stuff in for Mac?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.293
+  },
+  {
+    "text": "Does it need to be in there for Mac?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.271
+  },
+  {
+    "text": "Yes, maybe applications IPH would be better.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.236
+  },
+  {
+    "text": "Call it attribute type fix.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.326
+  },
+  {
+    "text": "For the attribute type rather than text which is what we're currently setting we want to set it as a number of the enum.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.262
+  },
+  {
+    "text": "It's in the parent folder to this 1.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.222
+  },
+  {
+    "text": "Razor extension seems to be picking up the ex the binary now.",
+    "label": 0,
+    "category": "ASR stutter: the ex the",
+    "score": 0.205
+  },
+  {
+    "text": "Do we How does the browser extension know which version it's on?",
+    "label": 0,
+    "category": "ASR error: false start (Do we How does)",
+    "score": 0.237
+  },
+  {
+    "text": "Remember we're building it in the repo, but it's actually installed oh have you un you installed it actually.",
+    "label": 0,
+    "category": "ASR error: garbled mid-sentence",
+    "score": 0.215
+  },
+  {
+    "text": "That works, great stuff.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.255
+  },
+  {
+    "text": "So some stuff we don't want to commit do we but we will need to do next time when we do it in CICD.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.209
+  },
+  {
+    "text": "When we create a fetch task via the task look back are we also creating it adding it to the audit log table?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.263
+  },
+  {
+    "text": "Is the task API running?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.301
+  },
+  {
+    "text": "It's the executable is installing it to users Alex update a local where We fixed that and changed it to install to the C drive, didn't we?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.225
+  },
+  {
+    "text": "When I run it the browser extension that is, I'm getting this update error.",
+    "label": 0,
+    "category": "missing comma after parenthetical",
+    "score": 0.268
+  },
+  {
+    "text": "That's IP address just times out.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.285
+  },
+  {
+    "text": "I tried in bridged yesterday and that didn't work either.",
+    "label": 0,
+    "category": "ASR error: in bridged (garbled product name)",
+    "score": 0.194
+  },
+  {
+    "text": "We didn't get any internet access in bridged.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.318
+  },
+  {
+    "text": "For the tasks API changes we made Have we got a branch for that and is it committed?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.28
+  },
+  {
+    "text": "PR for audit log fix for scheduler and loop back.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.231
+  },
+  {
+    "text": "1 thought on the TAS API, should we be doing something similar with to what we did in the analyst portal and caching the version?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.245
+  },
+  {
+    "text": "Just the tasks API for now, please.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.201
+  },
+  {
+    "text": "We've also committed extension underscore id.txt.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.317
+  },
+  {
+    "text": "Publickey.pem, I'm not sure we should have that committed, should we?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.288
+  },
+  {
+    "text": "For the interfaces you y you need to use a question about wipes, it's a question the rule",
+    "label": 0,
+    "category": "ASR error: garbled",
+    "score": 0.231
+  },
+  {
+    "text": "need to use the interface MCP server.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.243
+  },
+  {
+    "text": "PR4 TAS API Browser Extension Version and Download Endpoints.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.332
+  },
+  {
+    "text": "Can you check the core Terraform repo also that's in the parent directory to this to check that the analyst portal's got all the right permissions?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.217
+  },
+  {
+    "text": "No, could you pull main in core terraform and then check out a new branch for this please.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.252
+  },
+  {
+    "text": "Well, look in the core Terraform for task management to see what we do with database host.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.27
+  },
+  {
+    "text": "Is that set in the SSM parameters JSON?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.262
+  },
+  {
+    "text": "it's not going to change and seeing as we need to update the code anyway, let's just put it in the SSM parameters for now for the TAS API please.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.306
+  },
+  {
+    "text": "Please could you redo these changes on fresh branches please?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.294
+  },
+  {
+    "text": "The public forward slash manifest.json.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.202
+  },
+  {
+    "text": "Yes, but will we not expect to have a different key for dev staging and prod?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.287
+  },
+  {
+    "text": "Remove it from the manifest and then we'll inject it in the CI.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.246
+  },
+  {
+    "text": "and return me the URL to the PR.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.215
+  },
+  {
+    "text": "Browser extension is failing on test coverage.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.282
+  },
+  {
+    "text": "Small PR to fix installation path for Mac in the usage instructions.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.22
+  },
+  {
+    "text": "The Linton type check, CI step is failing.",
+    "label": 0,
+    "category": "ASR error: Linton instead of lint/linting",
+    "score": 0.207
+  },
+  {
+    "text": "Can you have a look in the task management repo and can we copy what's done there but for linting and type checking please and also tests.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.288
+  },
+  {
+    "text": "Could we do something a little more clever and maybe publish the version as the Get sharp.",
+    "label": 0,
+    "category": "ASR error: Get sharp (garbled tech name)",
+    "score": 0.229
+  },
+  {
+    "text": "But have the Go application and the browser extension check.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.228
+  },
+  {
+    "text": "I think it might be cleaner to just keep dev the same as staging and prod so we use git tags for everything.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.331
+  },
+  {
+    "text": "Commit and push please.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.334
+  },
+  {
+    "text": "Data fields type fix.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.22
+  },
+  {
+    "text": "Can you have a look why?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.33
+  },
+  {
+    "text": "I'm the installing.",
+    "label": 0,
+    "category": "ASR error: garbled",
+    "score": 0.195
+  },
+  {
+    "text": "I think we're using the TAS API, aren't we, to get it?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.313
+  },
+  {
+    "text": "which the task API generates and then passes us back.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.22
+  },
+  {
+    "text": "What can you check in the code what it's even used for?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.24
+  },
+  {
+    "text": "I think it should just take you tell you to go to the analyst poll.",
+    "label": 0,
+    "category": "ASR error: garbled disfluency",
+    "score": 0.209
+  },
+  {
+    "text": "on the file.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.319
+  },
+  {
+    "text": "Yes, the .command file exists in the so in the scripts directory.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.234
+  },
+  {
+    "text": "The Activity Bridge repo wasn't under the WORLE team, it was just under Will.",
+    "label": 0,
+    "category": "ASR error in spoken text",
+    "score": 0.21
+  },
+  {
+    "text": "I think that make file is generating too many for a start anyway.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.218
+  },
+  {
+    "text": "Let's drop using the make file and just generate them directly so we just need an ARM1 for Mac.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.293
+  },
+  {
+    "text": "the just the x 86 or whatever it is for Windows.",
+    "label": 0,
+    "category": "ASR error: garbled fragment",
+    "score": 0.206
+  },
+  {
+    "text": "Can we update the documentation saying that after first run the s the secret in GitHub Actions needs to updated with the real browser extension ID.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.225
+  },
+  {
+    "text": "In that release version in, can we make sure it doesn't contain that S3 download URL thing that we removed?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.277
+  },
+  {
+    "text": "Don't commit or change anything just yet, but I'm just thinking out loud, for the Mac update, if we're asking him to run a command in the terminal anyway we'd be as well just getting them to run the actual binary from there.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.33
+  },
+  {
+    "text": "We will we can remove the dot command file now though.",
+    "label": 0,
+    "category": "ASR stutter: will we can",
+    "score": 0.207
+  },
+  {
+    "text": "On the analyst portal repo, which is in the parent directory to this 1, there is already a PR for change in the install path, but it's now in Can we update it to what it should be now for Windows?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.272
+  },
+  {
+    "text": "Can we remove the pull request trigger stuff for deploy depth of that we added and just set it back to main?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.245
+  },
+  {
+    "text": "Funny analyst portal, the linting or type checking is failing.",
+    "label": 0,
+    "category": "ASR error: Funny instead of For the",
+    "score": 0.212
+  },
+  {
+    "text": "Can you run both and check?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.318
+  },
+  {
+    "text": "Can you pull main then check out a new branch from main called Task Loop Back Stage and Fix?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.322
+  },
+  {
+    "text": "Yesterday I added some secrets for the task lootback for dev.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.229
+  },
+  {
+    "text": "Well I think the missing from staging, I'm seeing this area in Grafana.",
+    "label": 0,
+    "category": "ASR error: garbled (the missing from)",
+    "score": 0.227
+  },
+  {
+    "text": "installation instructions update",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.28
+  },
+  {
+    "text": "And on Windows when you first run the executable, it can take a little while because it Windows Defender scans it.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.217
+  },
+  {
+    "text": "I thought DevServer ran on port 3000.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.335
+  },
+  {
+    "text": "Yes, nothing there currently.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.227
+  },
+  {
+    "text": "Can you check in the core terraform repo that's in the parent directory to this, pull main and check that we've got all the required variables? in Terraform for Activity Bridge Postgres.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.335
+  },
+  {
+    "text": "The deploy dev ci is failing.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.199
+  },
+  {
+    "text": "Look at the task management repo and parent directory to this.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.224
+  },
+  {
+    "text": "Please can you revert the change and then make it again, please?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.33
+  },
+  {
+    "text": "Pull main and check out a new branch from main called DockerfileFix and then commit and push the chain.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.294
+  },
+  {
+    "text": "Small PR 2.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.208
+  },
+  {
+    "text": "I thought there was scaling set up so that staging and prod had more.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.265
+  },
+  {
+    "text": "Can you pull main please and chair that we're up to date?",
+    "label": 0,
+    "category": "ASR error: chair instead of check",
+    "score": 0.196
+  },
+  {
+    "text": "then make the changes on that and commit and push.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.28
+  },
+  {
+    "text": "PR to remove auto-scaling from activity bridge and task lookback services.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.291
+  },
+  {
+    "text": "So say I wanted to just run it against staging, is that possible?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.32
+  },
+  {
+    "text": "It's the global IIM role thing I'm doing.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.296
+  },
+  {
+    "text": "then tag as and push.",
+    "label": 0,
+    "category": "ASR error: garbled (tag as -> tag and)",
+    "score": 0.195
+  },
+  {
+    "text": "Something weird's happening where when I make changes it seems to just keep rotating.",
+    "label": 0,
+    "category": "ASR artifact: rotating (probably reloading)",
+    "score": 0.236
+  },
+  {
+    "text": "Basically, we can't install dev, staging, and prod extensions all at the same time because of the updater using the same path free.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.273
+  },
+  {
+    "text": "It would also be good to have the browser extension name be suffixed with dev or staging in brackets, production can be left.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.245
+  },
+  {
+    "text": "It's not fine, I want it to work, so can we try upgrading and then see if that w fixes it.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.346
+  },
+  {
+    "text": "I thought that the Okay.",
+    "label": 0,
+    "category": "ASR error: garbled fragment",
+    "score": 0.193
+  },
+  {
+    "text": "Can you check exactly what files we need please and then calculate the size from that?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.316
+  },
+  {
+    "text": "Why does FP32 have weights and intake doesn't.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.246
+  },
+  {
+    "text": "ARE YOU SURE WHAT YOU DOIN IS CORRECT GIVIN THAT HE WORKS AN HUNDREDRED",
+    "label": 0,
+    "category": "ASR error in spoken text",
+    "score": 0.275
+  },
+  {
+    "text": "BE SURE THAT WHAT YOU ARE DOING IS CORRECT EVEN THAT IT WORKS UNENVOID",
+    "label": 0,
+    "category": "ASR error in spoken text",
+    "score": 0.225
+  },
+  {
+    "text": "Then, the weather was a little bit",
+    "label": 0,
+    "category": "routed to corrector",
+    "score": 0.207
+  },
+  {
+    "text": "Have we out any outstanding changes that aren't committed?",
+    "label": 0,
+    "category": "ASR error: missing verb (have we got)",
+    "score": 0.203
+  },
+  {
+    "text": "Generate me a prompt.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.343
+  },
+  {
+    "text": "So if you need if you well if you don't run it in the background I should say.",
+    "label": 0,
+    "category": "ASR stutter: repeated disfluency",
+    "score": 0.214
+  },
+  {
+    "text": "I have another session running that's built the Android builds.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.239
+  },
+  {
+    "text": "Give me a prompt to ask it questions that you need answers to.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.241
+  },
+  {
+    "text": "Okay, can you do me a local bill to test this please?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.244
+  },
+  {
+    "text": "Can you check out Main and Pull Plus?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.229
+  },
+  {
+    "text": "Someone wants me to move some tasks to rejected in the database as it is currently failing in the UI.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.234
+  },
+  {
+    "text": "Can you check out main for me and pull?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.216
+  },
+  {
+    "text": "So the URL encoding that is directly in the secrets manager when I've retrieved the secret.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.273
+  },
+  {
+    "text": "The 2 repos for tasks API and database management are in the parent folder to this.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.215
+  },
+  {
+    "text": "Both to see how they treat passwords.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.203
+  },
+  {
+    "text": "Can you make it reference?",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.311
+  },
+  {
+    "text": "New branch from main with that Jira ticket number.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.23
+  },
+  {
+    "text": "PR to fix failing TAS API in staging.",
+    "label": 1,
+    "category": "FP / clean spoken scored low",
+    "score": 0.294
+  },
+  {
+    "text": "A:\"Reliable for being a member of staff",
+    "label": 0,
+    "category": "routed to corrector",
+    "score": 0.224
+  },
+  {
+    "text": "A:\"Another than a]",
+    "label": 0,
+    "category": "routed to corrector",
+    "score": 0.243
   }
 ]
