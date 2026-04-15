@@ -314,9 +314,11 @@ def extract_cross_attn_weights(model_id: str, out_path: Path):
             matrices.append(arr)
             print(f"  layer {layer} {proj}: {name} [{arr.shape[0]}x{arr.shape[1]}]")
 
+    # Transpose: PyTorch nn.Linear stores [out_features, in_features], but the
+    # Rust code projects as hidden @ W (not hidden @ W.T), so save transposed.
     with open(out_path, "wb") as f:
         for mat in matrices:
-            f.write(mat.astype("<f4").tobytes())
+            f.write(mat.T.astype("<f4").tobytes())
 
     expected_bytes = num_layers * 2 * dim * dim * 4
     actual = out_path.stat().st_size

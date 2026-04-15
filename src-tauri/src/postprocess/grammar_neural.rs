@@ -151,8 +151,15 @@ mod bundled {
 
             ensure_ort_init()?;
 
+            // Force CPU EP for all grammar sessions. The ORT dylib from
+            // sherpa-onnx may have CoreML compiled in, which can silently
+            // produce wrong results for INT8-quantized grammar models.
+            let cpu_ep = vec![ort::ep::CPUExecutionProvider::default().build()];
+
             let router_session = Session::builder()
                 .map_err(|e| format!("session builder: {e}"))?
+                .with_execution_providers(&cpu_ep)
+                .map_err(|e| format!("router ep: {e}"))?
                 .commit_from_memory(ROUTER_MODEL_BYTES)
                 .map_err(|e| format!("router model: {e}"))?;
 
@@ -161,11 +168,15 @@ mod bundled {
 
             let t5_encoder = Session::builder()
                 .map_err(|e| format!("session builder: {e}"))?
+                .with_execution_providers(&cpu_ep)
+                .map_err(|e| format!("encoder ep: {e}"))?
                 .commit_from_memory(ENC_MODEL_BYTES)
                 .map_err(|e| format!("t5 encoder: {e}"))?;
 
             let t5_decoder = Session::builder()
                 .map_err(|e| format!("session builder: {e}"))?
+                .with_execution_providers(&cpu_ep)
+                .map_err(|e| format!("decoder ep: {e}"))?
                 .commit_from_memory(DEC_MODEL_BYTES)
                 .map_err(|e| format!("t5 decoder: {e}"))?;
 
@@ -376,9 +387,20 @@ mod bundled {
 
             let token_ids = self.decode_greedy(&hidden3, &attention_mask)?;
 
-            self.t5_tokenizer
+            let decoded = self.t5_tokenizer
                 .decode(&token_ids, true)
-                .map_err(|e| format!("t5 decode: {e}"))
+                .map_err(|e| format!("t5 decode: {e}"))?;
+
+            // Strip the task prefix if the model echoes it back.
+            Ok(if !self.corrector_prefix.is_empty() {
+                decoded
+                    .strip_prefix(&self.corrector_prefix)
+                    .or_else(|| decoded.strip_prefix(self.corrector_prefix.trim()))
+                    .unwrap_or(&decoded)
+                    .to_string()
+            } else {
+                decoded
+            })
         }
 
         /// Load 8 cross-attention K/V projection weight matrices from binary.
@@ -456,14 +478,15 @@ mod bundled {
                         .map_err(|e| format!("dec ids tensor: {e}"))?;
                     let mask_ref = TensorRef::<i64>::from_array_view(encoder_mask)
                         .map_err(|e| format!("enc mask tensor: {e}"))?;
-                    let hidden_ref = TensorRef::<f32>::from_array_view(hidden)
-                        .map_err(|e| format!("hidden tensor: {e}"))?;
 
                     let kv_refs: Vec<TensorRef<f32>> = kv
                         .iter()
                         .map(|a| TensorRef::<f32>::from_array_view(a))
                         .collect::<Result<_, _>>()
                         .map_err(|e| format!("kv tensor ref: {e}"))?;
+
+                    let hidden_ref = TensorRef::<f32>::from_array_view(hidden)
+                        .map_err(|e| format!("hidden tensor: {e}"))?;
 
                     let mut feed = inputs![
                         "input_ids"              => token_ref,
