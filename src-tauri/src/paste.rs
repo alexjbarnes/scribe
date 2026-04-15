@@ -65,8 +65,12 @@ pub fn paste(text: &str, target: Option<&PasteTarget>) -> Result<PasteResult, St
     if let Some(t) = target {
         if let Some(pid) = t.pid {
             match ax::insert_text(text, pid) {
-                Ok(()) => {
-                    log::info!("Pasted via Accessibility API: {text}");
+                Ok(verified) => {
+                    if verified {
+                        log::info!("Pasted via AX (verified): {text}");
+                    } else {
+                        log::info!("Pasted via AX (unverified, app may be slow to update): {text}");
+                    }
                     return Ok(PasteResult::Pasted);
                 }
                 Err(e) => {
@@ -320,11 +324,11 @@ mod ax {
     /// Uses AXSelectedText which replaces the current selection (or inserts
     /// at the cursor if nothing is selected) — exactly right for dictation.
     ///
-    /// After writing, verifies the field value actually changed. Electron/
-    /// Chromium apps (Teams, Brave, VS Code, etc.) accept AX writes at the
-    /// accessibility layer but silently discard them — this verification
-    /// catches that and triggers the clipboard fallback.
-    pub fn insert_text(text: &str, pid: i32) -> Result<(), String> {
+    /// Returns Ok(true) if write was verified, Ok(false) if AX reported
+    /// success but verification was inconclusive (some apps update the AX
+    /// value asynchronously). Only returns Err for genuine AX failures
+    /// (permission denied, no focused element, write rejected).
+    pub fn insert_text(text: &str, pid: i32) -> Result<bool, String> {
         unsafe {
             if AXIsProcessTrusted() == 0 {
                 return Err("accessibility permission not granted".into());
@@ -372,18 +376,26 @@ mod ax {
                 return Err(format!("AXSelectedText write failed (AX error {err})"));
             }
 
-            // Verify the write actually took effect
+            // Brief pause to let the app process the AX write before verifying.
+            std::thread::sleep(std::time::Duration::from_millis(20));
+
+            // Check if the write took effect. Electron/Chromium apps accept
+            // AX writes (AX_ERROR_SUCCESS) but silently discard them.
+            // Return Ok(false) rather than Err to avoid triggering the
+            // clipboard fallback, which would double-paste in native apps
+            // that just update their AX value asynchronously.
             let value_after = read_value(element.ptr());
             let len_after = value_after.as_ref().map(|s| s.len()).unwrap_or(0);
 
             if len_after <= len_before && !text.is_empty() {
-                return Err(
-                    "AX write reported success but field value unchanged (Electron/Chromium app?)"
-                        .into(),
+                log::warn!(
+                    "AX write unverified (before={}, after={}) — trusting AX_ERROR_SUCCESS",
+                    len_before, len_after
                 );
+                return Ok(false);
             }
 
-            Ok(())
+            Ok(true)
         }
     }
 
