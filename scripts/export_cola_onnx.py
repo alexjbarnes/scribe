@@ -16,6 +16,7 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True, help="Directory to write model files")
+    parser.add_argument("--version", default="0.0.1", help="Version suffix for output files (default: 0.0.1)")
     args = parser.parse_args()
 
     out = Path(args.output_dir)
@@ -46,14 +47,15 @@ def main():
         q_model = next((tmp_dir / "quantized").glob("*.onnx"), None) or \
                   next(tmp_dir.glob("*.onnx"), None)
 
-    shutil.copy(q_model, out / "cola_model_quantized.onnx")
-    print(f"INT8 ONNX: cola_model_quantized.onnx ({q_model.stat().st_size // 1024}KB)")
+    dest_name = f"cola_model_quantized.{args.version}.onnx"
+    shutil.copy(q_model, out / dest_name)
+    print(f"INT8 ONNX: {dest_name} ({q_model.stat().st_size // 1024}KB)")
 
     # Save tokenizer.json for the Rust tokenizers crate.
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     tokenizer.save_pretrained(str(out))
     tok_src = out / "tokenizer.json"
-    tok_dst = out / "cola_tokenizer.json"
+    tok_dst = out / f"cola_tokenizer.{args.version}.json"
     if tok_src.exists():
         shutil.copy(tok_src, tok_dst)
         tok_src.unlink()

@@ -1,9 +1,9 @@
 {
   "router": {
-    "threshold": 0.75
+    "threshold": 0.5
   },
   "corrector": {
-    "input_prefix": "",
+    "input_prefix": "grammar: ",
     "encoder_hidden_name": "hidden_states",
     "eos_token_id": 1,
     "decoder_start_token_id": 0,
