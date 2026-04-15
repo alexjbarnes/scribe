@@ -189,13 +189,18 @@ fn worker(
     let load_start = Instant::now();
 
     // sherpa-onnx calls ONNX Runtime through C++ FFI.  If the model file is
-    // corrupt or incompatible, ORT may throw a C++ `Ort::Exception` that
-    // crosses the FFI boundary.  `catch_unwind` converts foreign unwind into
-    // an Err on platforms that support it (and is a no-op where it doesn't),
-    // preventing the entire process from aborting.
-    let recognizer_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        create_recognizer(engine)
-    }));
+    // corrupt or incompatible, ORT may throw a C++ exception.  On some
+    // platforms (macOS ARM64 with static libs) the exception tables are
+    // broken so the C++ try-catch in sherpa-onnx's C API never fires —
+    // instead __cxa_throw → std::terminate → abort().
+    //
+    // Defence layers:
+    //  1. catch_unwind — catches Rust panics and (on some platforms) foreign
+    //     exceptions that propagate as unwinding.
+    //  2. abort_guard  — catches SIGABRT from terminate→abort on Unix,
+    //     recovering via siglongjmp.  Not needed on Android where the C++
+    //     shared runtime has working exception tables.
+    let recognizer_result = create_recognizer_safe(engine);
 
     let recognizer = match recognizer_result {
         Ok(Some(r)) => {
@@ -207,14 +212,7 @@ fn worker(
             let _ = ready_tx.send(Err("failed to create recognizer (sherpa-onnx returned null)".into()));
             return;
         }
-        Err(panic_info) => {
-            let msg = if let Some(s) = panic_info.downcast_ref::<String>() {
-                format!("model initialization panicked: {s}")
-            } else if let Some(s) = panic_info.downcast_ref::<&str>() {
-                format!("model initialization panicked: {s}")
-            } else {
-                "model initialization panicked (ONNX Runtime exception)".to_string()
-            };
+        Err(msg) => {
             log::error!("{msg}");
             let _ = ready_tx.send(Err(msg));
             return;
@@ -262,5 +260,84 @@ fn worker(
         );
 
         let _ = req.result_tx.send(Ok(text));
+    }
+}
+
+// ── Abort guard ─────────────────────────────────────────────────────────────
+//
+// On macOS ARM64 the prebuilt sherpa-onnx static library's C++ exception
+// tables are broken: __cxa_throw can't find the try-catch in the C API
+// wrapper, so it falls through to std::terminate → abort().  catch_unwind
+// only catches Rust panics, not SIGABRT.
+//
+// The abort guard (abort_guard.c, compiled for desktop Unix) installs a
+// SIGABRT handler that siglongjmps back to a recovery point.  This lets
+// us survive an ORT crash and return a clean error.  On Android the C++
+// shared runtime has working exception tables so the guard is not needed.
+
+#[cfg(unix)]
+extern "C" {
+    fn sherpa_abort_guard_enter() -> libc::c_int;
+    fn sherpa_abort_guard_leave();
+}
+
+/// Call `create_recognizer` with both catch_unwind (Rust panics / foreign
+/// unwinds) and the SIGABRT abort guard (C++ terminate → abort on desktop
+/// Unix).  Returns `Ok(Some(r))`, `Ok(None)`, or `Err(msg)`.
+fn create_recognizer_safe(
+    engine: &ModelEngine,
+) -> Result<Option<sherpa_onnx::OfflineRecognizer>, String> {
+    #[cfg(all(unix, not(target_os = "android")))]
+    {
+        // Arm the SIGABRT guard before entering sherpa-onnx.
+        let jumped = unsafe { sherpa_abort_guard_enter() };
+        if jumped != 0 {
+            // Recovered from abort — clean up and report failure.
+            unsafe { sherpa_abort_guard_leave() };
+            return Err(
+                "model crashed during loading (C++ exception in ONNX Runtime) — \
+                 this model may be incompatible with the current platform"
+                    .into(),
+            );
+        }
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            create_recognizer(engine)
+        }));
+
+        unsafe { sherpa_abort_guard_leave() };
+
+        match result {
+            Ok(opt) => Ok(opt),
+            Err(panic_info) => {
+                let msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                    format!("model initialization panicked: {s}")
+                } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    format!("model initialization panicked: {s}")
+                } else {
+                    "model initialization panicked (ONNX Runtime exception)".into()
+                };
+                Err(msg)
+            }
+        }
+    }
+
+    #[cfg(any(not(unix), target_os = "android"))]
+    {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            create_recognizer(engine)
+        })) {
+            Ok(opt) => Ok(opt),
+            Err(panic_info) => {
+                let msg = if let Some(s) = panic_info.downcast_ref::<String>() {
+                    format!("model initialization panicked: {s}")
+                } else if let Some(s) = panic_info.downcast_ref::<&str>() {
+                    format!("model initialization panicked: {s}")
+                } else {
+                    "model initialization panicked (ONNX Runtime exception)".into()
+                };
+                Err(msg)
+            }
+        }
     }
 }

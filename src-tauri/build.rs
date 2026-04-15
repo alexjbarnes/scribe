@@ -49,6 +49,13 @@ fn main() {
         println!("cargo:rerun-if-env-changed=SHERPA_ONNX_LIB_DIR");
     }
 
+    // Compile the SIGABRT guard for desktop Unix (macOS / Linux).
+    // Recovers from C++ exceptions that bypass catch_unwind and reach abort().
+    if target_os != "android" && (target_os == "macos" || target_os == "linux") {
+        cc::Build::new().file("abort_guard.c").compile("abort_guard");
+        println!("cargo:rerun-if-changed=abort_guard.c");
+    }
+
     if target_os == "android" {
         // sherpa-onnx / ONNX Runtime C++ code requires the C++ runtime.
         // Force the linker to record libc++_shared.so as a NEEDED dependency

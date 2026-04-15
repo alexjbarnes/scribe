@@ -60,7 +60,7 @@ _setup-sherpa-desktop:
 
     SHERPA_VERSION="{{sherpa_version}}"
     # ORT version must match what sherpa-onnx was built against
-    ORT_VERSION="1.23.2"
+    ORT_VERSION="1.24.2"
     CACHE="{{desktop_deps}}/cache"
     mkdir -p "$CACHE" "$LIB_DIR"
 
@@ -148,7 +148,16 @@ _setup-grammar:
     #!/usr/bin/env bash
     set -euo pipefail
     GRAMMAR_DIR="{{tauri_dir}}/data/grammar"
-    FILES=(cola_model_quantized.onnx cola_tokenizer.json encoder_model_quantized.onnx decoder_model_quantized.onnx t5_tokenizer.json)
+    VERSION="0.0.1"
+    FILES=(
+        "cola_model_quantized.${VERSION}.onnx"
+        "cola_tokenizer.${VERSION}.json"
+        "encoder_model_quantized.${VERSION}.onnx"
+        "decoder_with_past_quantized.${VERSION}.onnx"
+        "cross_attn_kv_weights.${VERSION}.bin"
+        "t5_tokenizer.${VERSION}.json"
+        "config.${VERSION}.json"
+    )
     complete=true
     for f in "${FILES[@]}"; do [ -f "$GRAMMAR_DIR/$f" ] || complete=false; done
     if $complete; then
@@ -160,11 +169,11 @@ _setup-grammar:
     VENV_DIR="{{repo_root}}/.grammar-venv"
     [ -d "$VENV_DIR" ] || python3 -m venv "$VENV_DIR"
     "$VENV_DIR/bin/pip" install -q --upgrade pip
-    "$VENV_DIR/bin/pip" install -q huggingface_hub transformers "optimum[onnxruntime]"
+    "$VENV_DIR/bin/pip" install -q huggingface_hub transformers "optimum[onnxruntime]" onnx numpy torch
     echo "==> Exporting CoLA router..."
-    "$VENV_DIR/bin/python" "{{repo_root}}/scripts/export_cola_onnx.py" --output-dir "$GRAMMAR_DIR"
+    "$VENV_DIR/bin/python" "{{repo_root}}/scripts/export_cola_onnx.py" --output-dir "$GRAMMAR_DIR" --version "$VERSION"
     echo "==> Downloading T5 corrector..."
-    "$VENV_DIR/bin/python" "{{repo_root}}/scripts/download_t5_grammar_onnx.py" --output-dir "$GRAMMAR_DIR"
+    "$VENV_DIR/bin/python" "{{repo_root}}/scripts/download_t5_grammar_onnx.py" --output-dir "$GRAMMAR_DIR" --version "$VERSION"
     echo "==> Grammar models ready — rebuild to embed them"
 
 # First-time Android setup: sherpa-onnx libs, ORT shared library, grammar models
