@@ -4,6 +4,7 @@ mod debug_log;
 mod delivery;
 mod engine;
 mod history;
+mod media;
 mod models;
 #[cfg(desktop)]
 mod paste;
@@ -286,6 +287,7 @@ fn add_snippet_trigger(id: String, trigger: String) -> Result<(), String> {
 /// to get the text back.
 #[tauri::command]
 fn ui_start_recording() -> Result<(), String> {
+    media::pause_media();
     engine::with_mut(|eng| eng.start_streaming())
         .unwrap_or_else(|| Err("Engine not ready".into()))
 }
@@ -297,12 +299,14 @@ async fn ui_stop_and_transcribe() -> Result<String, String> {
     let pending = engine::with(|eng| eng.stop_recording())
         .unwrap_or_else(|| Err("Engine not ready".into()))?;
 
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         pending.finalize_without_history()
             .ok_or_else(|| "No speech detected".into())
     })
     .await
-    .map_err(|e| format!("{e}"))?
+    .map_err(|e| format!("{e}"))?;
+    media::resume_media();
+    result
 }
 
 /// Stop a UI-initiated recording and return raw transcription text.
@@ -313,12 +317,14 @@ async fn ui_stop_and_transcribe_raw() -> Result<String, String> {
     let pending = engine::with(|eng| eng.stop_recording())
         .unwrap_or_else(|| Err("Engine not ready".into()))?;
 
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
         pending.finalize_raw()
             .ok_or_else(|| "No speech detected".into())
     })
     .await
-    .map_err(|e| format!("{e}"))?
+    .map_err(|e| format!("{e}"))?;
+    media::resume_media();
+    result
 }
 
 /// Initialize the Engine in the background: VAD, recorder, transcriber,
@@ -462,6 +468,7 @@ pub fn run() {
                             match started {
                                 Some(Ok(())) => {
                                     state.recording.store(true, Ordering::SeqCst);
+                                    media::pause_media();
                                     sound::play_start();
                                     let _ = app_handle.emit("dictation-state", "recording");
                                     log::info!("Shortcut: recording started");
@@ -491,6 +498,7 @@ pub fn run() {
                                 Some(Ok(p)) => p,
                                 Some(Err(e)) => {
                                     log::error!("Shortcut: stop failed: {e}");
+                                    media::resume_media();
                                     let _ = app_handle.emit("dictation-state", "idle");
                                     return;
                                 }
@@ -530,6 +538,7 @@ pub fn run() {
                                             log::warn!("Shortcut: no text produced");
                                         }
                                     }
+                                    media::resume_media();
                                     let _ = app_for_paste.emit("dictation-state", "idle");
                                 })
                                 .ok();
@@ -555,6 +564,7 @@ pub fn run() {
                             match started {
                                 Some(Ok(())) => {
                                     state.recording.store(true, Ordering::SeqCst);
+                                    media::pause_media();
                                     sound::play_start();
                                     let _ = app_handle_s.emit("dictation-state", "snippet-recording");
                                     log::info!("Snippet shortcut: recording started");
@@ -584,6 +594,7 @@ pub fn run() {
                                 Some(Ok(p)) => p,
                                 Some(Err(e)) => {
                                     log::error!("Snippet shortcut: stop failed: {e}");
+                                    media::resume_media();
                                     let _ = app_handle_s.emit("dictation-state", "idle");
                                     return;
                                 }
@@ -627,6 +638,7 @@ pub fn run() {
                                             log::warn!("Snippet shortcut: no text produced");
                                         }
                                     }
+                                    media::resume_media();
                                     let _ = app_for_snippet.emit("dictation-state", "idle");
                                 })
                                 .ok();

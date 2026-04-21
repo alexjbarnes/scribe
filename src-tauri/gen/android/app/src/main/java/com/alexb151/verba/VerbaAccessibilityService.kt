@@ -26,6 +26,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.content.SharedPreferences
 import android.animation.ValueAnimator
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.widget.Toast
 import android.app.KeyguardManager
 import android.graphics.Color
@@ -95,6 +98,7 @@ class VerbaAccessibilityService : AccessibilityService() {
 
     private var ringView: RoundedRingView? = null
     private var ringAnimator: ValueAnimator? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
 
     // Debounced hide to avoid flickering when keyboard opens
     private var pendingHide: Runnable? = null
@@ -606,11 +610,34 @@ class VerbaAccessibilityService : AccessibilityService() {
         ringView?.visibility = View.INVISIBLE
     }
 
+    private fun requestMediaPause() {
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .build()
+        if (am.requestAudioFocus(req) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
+            audioFocusRequest = req
+        }
+    }
+
+    private fun abandonMediaPause() {
+        val req = audioFocusRequest ?: return
+        audioFocusRequest = null
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        am.abandonAudioFocusRequest(req)
+    }
+
     private fun startRecording() {
         logI("startRecording")
         recording = true
         hapticFeedback()
         startRecordingRing()
+        requestMediaPause()
 
         executor.execute {
             val started = nativeStartRecording()
@@ -618,6 +645,7 @@ class VerbaAccessibilityService : AccessibilityService() {
             if (!started) {
                 mainHandler.post {
                     recording = false
+                    abandonMediaPause()
                     hideRing()
                     toast("Failed to start recording")
                 }
@@ -636,6 +664,7 @@ class VerbaAccessibilityService : AccessibilityService() {
             val text = nativeStopAndTranscribe()
             logI("nativeStopAndTranscribe returned ${text?.length ?: 0} chars")
             mainHandler.post {
+                abandonMediaPause()
                 processing = false
                 if (!text.isNullOrEmpty()) {
                     logI("injecting text: \"${text.take(80)}\"")
@@ -657,6 +686,7 @@ class VerbaAccessibilityService : AccessibilityService() {
         recording = true
         hapticFeedback()
         startRecordingRing(snippet = true)
+        requestMediaPause()
 
         executor.execute {
             val started = nativeStartRecording()
@@ -665,6 +695,7 @@ class VerbaAccessibilityService : AccessibilityService() {
                 mainHandler.post {
                     snippetMode = false
                     recording = false
+                    abandonMediaPause()
                     hideRing()
                     toast("Failed to start recording")
                 }
@@ -685,6 +716,7 @@ class VerbaAccessibilityService : AccessibilityService() {
 
             if (text.isNullOrEmpty()) {
                 mainHandler.post {
+                    abandonMediaPause()
                     snippetMode = false
                     processing = false
                     hideRing()
@@ -698,6 +730,7 @@ class VerbaAccessibilityService : AccessibilityService() {
                 null
             }
             mainHandler.post {
+                abandonMediaPause()
                 snippetMode = false
                 processing = false
                 if (body != null) {
