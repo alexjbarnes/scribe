@@ -65,12 +65,8 @@ pub fn paste(text: &str, target: Option<&PasteTarget>) -> Result<PasteResult, St
     if let Some(t) = target {
         if let Some(pid) = t.pid {
             match ax::insert_text(text, pid) {
-                Ok(verified) => {
-                    if verified {
-                        log::info!("Pasted via AX (verified): {text}");
-                    } else {
-                        log::info!("Pasted via AX (unverified, app may be slow to update): {text}");
-                    }
+                Ok(()) => {
+                    log::info!("Pasted via Accessibility API: {text}");
                     return Ok(PasteResult::Pasted);
                 }
                 Err(e) => {
@@ -376,26 +372,24 @@ mod ax {
                 return Err(format!("AXSelectedText write failed (AX error {err})"));
             }
 
-            // Brief pause to let the app process the AX write before verifying.
             std::thread::sleep(std::time::Duration::from_millis(20));
+            let len_after = read_value(element.ptr())
+                .as_ref().map(|s| s.len()).unwrap_or(0);
 
-            // Check if the write took effect. Electron/Chromium apps accept
-            // AX writes (AX_ERROR_SUCCESS) but silently discard them.
-            // Return Ok(false) rather than Err to avoid triggering the
-            // clipboard fallback, which would double-paste in native apps
-            // that just update their AX value asynchronously.
-            let value_after = read_value(element.ptr());
-            let len_after = value_after.as_ref().map(|s| s.len()).unwrap_or(0);
-
-            if len_after <= len_before && !text.is_empty() {
-                log::warn!(
-                    "AX write unverified (before={}, after={}) — trusting AX_ERROR_SUCCESS",
-                    len_before, len_after
-                );
-                return Ok(false);
+            if len_after > len_before || text.is_empty() {
+                return Ok(());
             }
 
-            Ok(true)
+            // Native apps update within ~50ms. Electron never will.
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            let len_retry = read_value(element.ptr())
+                .as_ref().map(|s| s.len()).unwrap_or(0);
+
+            if len_retry > len_before {
+                return Ok(());
+            }
+
+            Err("AX write silently discarded (Electron/Chromium app)".into())
         }
     }
 
